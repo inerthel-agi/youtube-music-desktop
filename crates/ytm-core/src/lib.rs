@@ -66,7 +66,13 @@ pub struct PlayerState {
     pub duration: u32,
     /// Rating of the current track, from the player bar's like button.
     pub like: Like,
+    /// Page parts the app relies on that the page no longer has (YouTube Music
+    /// changed): only names from `PAGE_PARTS`.
+    pub missing: Vec<String>,
 }
+
+/// Page parts `assets/bridge.js` checks for.
+pub const PAGE_PARTS: &[&str] = &["progress-bar", "time-info", "player-time", "like", "next"];
 
 /// Like state of the current track. Unknown page values read as `Indifferent`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +102,7 @@ impl Default for PlayerState {
             position: 0,
             duration: 0,
             like: Like::Indifferent,
+            missing: Vec::new(),
         }
     }
 }
@@ -134,6 +141,8 @@ pub fn parse_bridge_msg(raw: &str) -> Result<PlayerState, BridgeError> {
     if !is_artwork_url(&s.artwork) {
         s.artwork.clear();
     }
+    s.missing.retain(|m| PAGE_PARTS.contains(&m.as_str()));
+    s.missing.dedup();
     for url in [&mut s.track_url, &mut s.artist_url, &mut s.album_url] {
         if !is_ytm_url(url) {
             url.clear();
@@ -288,6 +297,12 @@ mod tests {
     #[test]
     fn missing_fields_default() {
         assert_eq!(parse_bridge_msg("{}").unwrap(), PlayerState::default());
+    }
+
+    #[test]
+    fn missing_parts_keep_known_names_only() {
+        let s = parse_bridge_msg(r#"{"missing":["like","<script>","like","next"]}"#).unwrap();
+        assert_eq!(s.missing, ["like", "next"]);
     }
 
     #[test]

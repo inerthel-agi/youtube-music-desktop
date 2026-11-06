@@ -93,6 +93,12 @@ fn player_event(app: AppHandle, msg: String) -> Result<(), String> {
         log::debug!("player: {state:?}");
         std::mem::replace(&mut p.state, state.clone())
     };
+    if state.missing != prev.missing && !state.missing.is_empty() {
+        log::warn!(
+            "YouTube Music page changed: {} not found; some features may stop working",
+            state.missing.join(", ")
+        );
+    }
     features::on_state(&app, &prev, &state);
     tray::set_tooltip(&app, state.track_label());
     if let Some(w) = main_window(&app) {

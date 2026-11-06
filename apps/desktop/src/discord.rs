@@ -14,6 +14,7 @@
 //!   pipe server running as this same user that answers the handshake with READY.
 
 use std::{
+    collections::VecDeque,
     fs::{File, OpenOptions},
     io::{self, Read, Write},
     os::windows::io::AsRawHandle,
@@ -72,13 +73,19 @@ impl Drop for Presence {
 /// A track change arrives as a burst (title first, then duration, play, ...):
 /// wait until it settles and send only the latest state.
 const SETTLE: Duration = Duration::from_millis(1200);
-/// Discord accepts about 5 activity updates per 20 s and silently drops the
-/// rest, which left stale or incomplete timings on screen.
-const MIN_GAP: Duration = Duration::from_secs(4);
+/// Discord accepts about 5 activity updates per 20 s and drops the rest (stale
+/// timings on screen), or closes the pipe. Up to `BUDGET` sends go out at once
+/// (several "next" in a row), then the next waits until the oldest is `WINDOW`
+/// old; one second over 20 s keeps clear of the limit's edge.
+const BUDGET: usize = 5;
+const WINDOW: Duration = Duration::from_secs(21);
+/// Longest a stream of updates can hold back a send: updates that never pause
+/// must not leave an old track on the profile.
+const MAX_SETTLE: Duration = Duration::from_secs(3);
 /// Connection check / reconnect interval while a track is shown: the longest
 /// time the activity stays missing after Discord drops the pipe. One
 /// `PeekNamedPipe` per client, plus failed opens when Discord is not running.
-const HEALTH: Duration = Duration::from_secs(5);
+const HEALTH: Duration = Duration::from_secs(2);
 const OP_CLOSE: u32 = 2;
 const OP_PING: u32 = 3;
 const OP_PONG: u32 = 4;
@@ -88,14 +95,31 @@ enum Event {
     Tick,
 }
 
+/// Times of the last sends, for the `BUDGET` per `WINDOW` limit.
+#[derive(Default)]
+struct Budget(VecDeque<Instant>);
+
+impl Budget {
+    /// When the next send may go out.
+    fn earliest(&self, now: Instant) -> Instant {
+        match self.0.front() {
+            Some(&oldest) if self.0.len() >= BUDGET => (oldest + WINDOW).max(now),
+            _ => now,
+        }
+    }
+
+    fn record(&mut self, at: Instant) {
+        self.0.push_back(at);
+        while self.0.len() > BUDGET {
+            self.0.pop_front();
+        }
+    }
+}
+
 /// Waits for the next message (or `idle` elapses: `Tick`), then keeps replacing
-/// it with newer ones until the channel stays quiet for `SETTLE` and `MIN_GAP`
-/// has passed since the last send.
-fn next_settled(
-    rx: &mpsc::Receiver<Msg>,
-    last_sent: Option<Instant>,
-    idle: Option<Duration>,
-) -> Event {
+/// it with newer ones until the channel stays quiet for `SETTLE`, or `MAX_SETTLE`
+/// has passed; never before `allowed` (the send budget).
+fn next_settled(rx: &mpsc::Receiver<Msg>, allowed: Instant, idle: Option<Duration>) -> Event {
     let first = match idle {
         Some(t) => rx.recv_timeout(t),
         None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
@@ -105,12 +129,19 @@ fn next_settled(
         Err(RecvTimeoutError::Timeout) => return Event::Tick,
         Err(RecvTimeoutError::Disconnected) => return Event::Msg(Msg::Stop),
     };
+    let start = Instant::now();
+    let earliest = allowed.max(start);
+    let deadline = earliest.max(start + MAX_SETTLE);
     loop {
         if matches!(msg, Msg::Stop) {
             return Event::Msg(msg);
         }
-        let gap = last_sent.map_or(Duration::ZERO, |t| MIN_GAP.saturating_sub(t.elapsed()));
-        match rx.recv_timeout(SETTLE.max(gap)) {
+        let now = Instant::now();
+        let until = (now + SETTLE).max(earliest).min(deadline);
+        if until <= now {
+            return Event::Msg(msg);
+        }
+        match rx.recv_timeout(until - now) {
             Ok(newer) => msg = newer,
             Err(RecvTimeoutError::Timeout) => return Event::Msg(msg),
             Err(RecvTimeoutError::Disconnected) => return Event::Msg(Msg::Stop),
@@ -129,10 +160,11 @@ fn run(rx: mpsc::Receiver<Msg>) {
     let pid = std::process::id();
     let mut conns: Vec<Conn> = Vec::new();
     let mut current: Track = None;
-    let mut last_sent: Option<Instant> = None;
+    let mut budget = Budget::default();
     let mut nonce = 0u64;
     loop {
-        match next_settled(&rx, last_sent, current.is_some().then_some(HEALTH)) {
+        let allowed = budget.earliest(Instant::now());
+        match next_settled(&rx, allowed, current.is_some().then_some(HEALTH)) {
             Event::Msg(Msg::Stop) => {
                 for c in &mut conns {
                     nonce += 1;
@@ -144,13 +176,7 @@ fn run(rx: mpsc::Receiver<Msg>) {
             Event::Tick => {}
         }
         // Drop clients that went away (account switch, Discord restart, quit).
-        conns.retain(|c| {
-            let ok = alive(&c.pipe);
-            if !ok {
-                log::info!("Discord pipe {} closed", c.index);
-            }
-            ok
-        });
+        conns.retain_mut(check);
         let mut sent = 0;
         // Second pass only after a failed send: reconnect and resend now rather
         // than at the next HEALTH tick.
@@ -182,7 +208,7 @@ fn run(rx: mpsc::Receiver<Msg>) {
             }
         }
         if sent > 0 {
-            last_sent = Some(Instant::now());
+            budget.record(Instant::now());
             log::info!(
                 "Discord activity {} ({sent} client(s))",
                 if current.is_some() { "sent" } else { "cleared" }
@@ -286,8 +312,35 @@ fn user_sid(buf: &[u64]) -> PSID {
     unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid }
 }
 
-/// The server end is still there (a closed pipe makes the peek fail).
-fn alive(pipe: &File) -> bool {
+/// Keeps a connection only while its server end is there. Reads what Discord
+/// sent unasked: a PING is answered, a CLOSE is logged with its reason.
+fn check(c: &mut Conn) -> bool {
+    let Some(available) = available(&c.pipe) else {
+        log::info!("Discord pipe {} closed", c.index);
+        return false;
+    };
+    if available < 8 {
+        return true; // no complete frame header waiting
+    }
+    match read_frame(&mut c.pipe) {
+        Ok((OP_CLOSE, body)) => {
+            log::warn!("Discord closed pipe {}: {}", c.index, String::from_utf8_lossy(&body));
+            false
+        }
+        Ok((OP_PING, body)) => {
+            let ping: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            c.pipe.write_all(&encode(OP_PONG, &ping)).is_ok()
+        }
+        Ok(_) => true,
+        Err(e) => {
+            log::info!("Discord pipe {} unreadable: {e}", c.index);
+            false
+        }
+    }
+}
+
+/// Bytes waiting in the pipe, or `None` when its server end is gone (the peek fails).
+fn available(pipe: &File) -> Option<u32> {
     let mut available = 0u32;
     // SAFETY: valid pipe handle owned by `pipe`; only the byte count is requested.
     unsafe {
@@ -301,6 +354,7 @@ fn alive(pipe: &File) -> bool {
         )
     }
     .is_ok()
+    .then_some(available)
 }
 
 fn send(pipe: &mut File, payload: &serde_json::Value) -> io::Result<()> {
@@ -384,22 +438,52 @@ mod tests {
     }
 
     #[test]
+    fn budget_allows_a_burst_then_waits_for_the_window() {
+        let t0 = Instant::now();
+        let mut b = Budget::default();
+        for i in 0..BUDGET {
+            assert_eq!(b.earliest(t0), t0, "send {i} goes out at once");
+            b.record(t0);
+        }
+        assert_eq!(b.earliest(t0), t0 + WINDOW);
+        assert_eq!(b.earliest(t0 + WINDOW + Duration::from_secs(1)), t0 + WINDOW + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn endless_updates_still_send_within_max_settle() {
+        let (tx, rx) = mpsc::channel();
+        let feeder = thread::spawn(move || {
+            for i in 0..40 {
+                if tx.send(Msg::Update(track(&format!("t{i}")))).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(200)); // faster than SETTLE
+            }
+        });
+        let t = Instant::now();
+        assert!(matches!(next_settled(&rx, Instant::now(), None), Event::Msg(Msg::Update(Some(_)))));
+        assert!(t.elapsed() < MAX_SETTLE + Duration::from_millis(500));
+        drop(rx);
+        let _ = feeder.join();
+    }
+
+    #[test]
     fn burst_settles_to_latest_state() {
         let (tx, rx) = mpsc::channel();
         for t in ["old", "new title, old timing", "new, complete"] {
             tx.send(Msg::Update(track(t))).unwrap();
         }
-        match next_settled(&rx, None, None) {
+        match next_settled(&rx, Instant::now(), None) {
             Event::Msg(Msg::Update(Some(a))) => assert_eq!(a.title, "new, complete"),
             _ => panic!("expected the latest update"),
         }
         assert!(matches!(
-            next_settled(&rx, None, Some(Duration::from_millis(10))),
+            next_settled(&rx, Instant::now(), Some(Duration::from_millis(10))),
             Event::Tick
         ));
         tx.send(Msg::Stop).unwrap();
         assert!(matches!(
-            next_settled(&rx, None, None),
+            next_settled(&rx, Instant::now(), None),
             Event::Msg(Msg::Stop)
         ));
     }

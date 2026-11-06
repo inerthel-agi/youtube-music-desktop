@@ -29,14 +29,51 @@
     };
   };
 
-  // The player knows the track length as soon as the track is chosen; the <video>
-  // (MSE) often reports NaN/0 for a moment, which made Discord show "0:00" instead
-  // of the progress bar.
+  // Track time. YouTube Music streams the whole queue into one <video>: its
+  // currentTime keeps counting across tracks and its duration (like the player's
+  // getDuration()) grows while the track loads. The player bar's slider has the
+  // real length (aria-valuemax) and getCurrentTime() the position in the track.
+  const progressBar = () => document.querySelector('ytmusic-player-bar #progress-bar');
+  // Second source: the "0:27 / 2:44" text of the player bar, in seconds.
+  const timeText = () => {
+    const t = document.querySelector('ytmusic-player-bar .time-info')?.textContent || '';
+    const secs = (s) => s.trim().split(':').reduce((a, n) => a * 60 + Number(n), 0);
+    const [pos, len] = t.split('/');
+    return len ? { position: secs(pos), duration: secs(len) } : null;
+  };
   const trackDuration = (player) => {
-    let d = 0;
-    try { d = (player && player.getDuration && player.getDuration()) || 0; } catch (_) {}
+    let d = Number(progressBar()?.getAttribute('aria-valuemax')) || 0;
+    if (!(d > 0)) d = timeText()?.duration || 0;
+    if (!(d > 0)) try { d = (player && player.getDuration && player.getDuration()) || 0; } catch (_) {}
     if (!(d > 0) && video && isFinite(video.duration)) d = video.duration;
     return d > 0 ? Math.floor(d) : 0;
+  };
+  const trackPosition = () => {
+    const player = document.getElementById('movie_player');
+    try {
+      if (player && player.getCurrentTime) return player.getCurrentTime() || 0;
+    } catch (_) {}
+    const t = timeText();
+    if (t && t.position >= 0) return t.position;
+    return video ? video.currentTime || 0 : 0;
+  };
+  // YouTube Music rewrites some attributes on every playback tick with the same
+  // value; reacting to those would send a message every second. Only real changes count.
+  const watchAttr = (el, name) => {
+    let value = el.getAttribute(name);
+    new MutationObserver(() => {
+      const v = el.getAttribute(name);
+      if (v !== value) { value = v; schedule(); }
+    }).observe(el, { attributes: true, attributeFilter: [name] });
+  };
+  // The slider's length can arrive after the metadata: watch that one attribute.
+  let barEl = null;
+  const watchBar = () => {
+    const el = progressBar();
+    if (el && el !== barEl) {
+      barEl = el;
+      watchAttr(el, 'aria-valuemax');
+    }
   };
 
   // Rating shown by the player bar: "like", "dislike" or "indifferent". The
@@ -46,10 +83,20 @@
     const el = document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer');
     if (el && el !== likeEl) {
       likeEl = el;
-      new MutationObserver(schedule).observe(el, { attributes: true, attributeFilter: ['like-status'] });
+      watchAttr(el, 'like-status');
     }
     return (el && el.getAttribute('like-status') || 'indifferent').toLowerCase();
   };
+
+  // Page parts the app relies on. Reported (and logged by the app) when one is
+  // missing on a loaded track, so a YouTube Music redesign shows up in the log.
+  const missingParts = (player) => [
+    ['progress-bar', progressBar()],
+    ['time-info', document.querySelector('ytmusic-player-bar .time-info')],
+    ['player-time', player && player.getCurrentTime],
+    ['like', document.querySelector('ytmusic-player-bar #button-shape-like button')],
+    ['next', document.querySelector('ytmusic-player-bar .next-button')],
+  ].filter(([, found]) => !found).map(([name]) => name);
 
   const send = () => {
     queued = false;
@@ -68,9 +115,10 @@
       ...urls,
       volume: video ? Math.round(video.volume * 100) : 100,
       // Sent on play/pause/seek only (no timer): the app extrapolates from these.
-      position: video ? Math.floor(video.currentTime || 0) : 0,
-      duration: trackDuration(player),
+      position: Math.floor(trackPosition()),
+      duration: (watchBar(), trackDuration(player)),
       like: likeStatus(),
+      missing: md && md.title ? missingParts(player) : [],
     });
     if (msg === last) return; // unchanged: no IPC, no redraw
     last = msg;
@@ -85,7 +133,7 @@
   const checkDrift = () => {
     if (!video || queued) return;
     const expected = sent.playing ? sent.position + (performance.now() - sent.at) / 1000 : sent.position;
-    if (Math.abs(video.currentTime - expected) > 2) schedule();
+    if (Math.abs(trackPosition() - expected) > 2) schedule();
   };
   // Coalesce bursts (play + loadedmetadata + metadata set) into one message.
   const schedule = () => {
@@ -117,10 +165,15 @@
     if (byline) {
       new MutationObserver(schedule).observe(byline, { childList: true, subtree: true, characterData: true });
     }
-    // Ad start/end only shows as a class on the player element.
+    // Ad start/end only shows as a class on the player element (whose class list
+    // also changes for buffering, hover...): react to ad-showing only.
     const player = document.getElementById('movie_player');
     if (player) {
-      new MutationObserver(schedule).observe(player, { attributes: true, attributeFilter: ['class'] });
+      let ad = player.classList.contains('ad-showing');
+      new MutationObserver(() => {
+        const now = player.classList.contains('ad-showing');
+        if (now !== ad) { ad = now; schedule(); }
+      }).observe(player, { attributes: true, attributeFilter: ['class'] });
     }
     // "Resume on start": the app opened the last track; on its first play, stop
     // and go back to where it was (the user presses play).
@@ -131,7 +184,10 @@
         v.removeEventListener('playing', once);
         window.__ytmResume = null;
         v.pause();
-        if (resume.t > 0 && resume.t < (v.duration || Infinity)) v.currentTime = resume.t;
+        // Seek through the player: the <video> clock is not the track's.
+        const player = document.getElementById('movie_player');
+        const length = trackDuration(player) || Infinity;
+        if (resume.t > 0 && resume.t < length && player && player.seekTo) player.seekTo(resume.t, true);
       };
       v.addEventListener('playing', once);
     }
