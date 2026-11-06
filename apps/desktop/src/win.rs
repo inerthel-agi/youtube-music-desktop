@@ -451,16 +451,17 @@ pub fn set_app_id() {
     }
 }
 
-/// Creates "YouTube Music.lnk" in the user's Start menu (with the AppUserModelID)
-/// when it does not exist yet. Windows reads the media session name and icon from it.
+/// Creates "YouTube Music.lnk" in the user's Start menu (with the AppUserModelID),
+/// or rewrites it when it points to another executable (app moved or renamed).
+/// Windows reads the media session name and icon from it.
 pub fn ensure_start_menu_shortcut() -> Result<(), String> {
     let appdata = std::env::var_os("APPDATA").ok_or("APPDATA not set")?;
     let lnk = std::path::Path::new(&appdata)
         .join(r"Microsoft\Windows\Start Menu\Programs\YouTube Music.lnk");
-    if lnk.exists() {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    if lnk.exists() && shortcut_target(&lnk).is_some_and(|t| t.eq_ignore_ascii_case(exe.as_os_str())) {
         return Ok(());
     }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let exe = HSTRING::from(exe.as_os_str());
     // SAFETY: COM is initialized on this thread; all strings outlive the calls.
     unsafe {
@@ -479,8 +480,24 @@ pub fn ensure_start_menu_shortcut() -> Result<(), String> {
         file.Save(&HSTRING::from(lnk.as_os_str()), true)
             .map_err(|e| format!("saving shortcut: {e}"))?;
     }
-    log::info!("created Start menu shortcut {}", lnk.display());
+    log::info!("wrote Start menu shortcut {}", lnk.display());
     Ok(())
+}
+
+/// Executable a shortcut points to.
+fn shortcut_target(lnk: &std::path::Path) -> Option<std::ffi::OsString> {
+    use std::os::windows::ffi::OsStringExt;
+    // SAFETY: COM is initialized on this thread; `buf` outlives GetPath.
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let file: IPersistFile = link.cast().ok()?;
+        file.Load(&HSTRING::from(lnk.as_os_str()), windows::Win32::System::Com::STGM_READ)
+            .ok()?;
+        let mut buf = [0u16; 1024];
+        link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some(std::ffi::OsString::from_wide(&buf[..len]))
+    }
 }
 
 struct Media {

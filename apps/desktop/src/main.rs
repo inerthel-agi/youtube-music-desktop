@@ -686,6 +686,13 @@ fn main() {
             if saved.obs_widget {
                 set_obs(handle, Some(saved.obs_port));
             }
+            // Keep the Windows "Run" entry on this executable if it was moved or renamed.
+            #[cfg(windows)]
+            if saved.launch_at_startup
+                && let Err(e) = win::set_autostart(true)
+            {
+                log::warn!("start with Windows not refreshed: {e}");
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

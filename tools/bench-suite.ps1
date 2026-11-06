@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
   Runs the prototype benchmark suite sequentially:
-    1. idle (home page, nothing playing) for baseline, hybrid and YTMDesktop;
-    2. playing, then playing while minimized, for baseline and hybrid.
+    1. idle (home page, nothing playing) for youtube-music (baseline), hybrid and YTMDesktop;
+    2. playing, then playing while minimized, for youtube-music and hybrid.
   Playback starts on its own from the same watch URL in both prototypes
   (YTM_START_URL), so both play the same content. YTMDesktop is measured idle
   only: start its playback by hand, then run bench.ps1 -ProcessName.
@@ -25,13 +25,14 @@ public static class BenchWin { [DllImport("user32.dll")] public static extern bo
 "@
 
 function Last-State([string]$App) {
-    $f = Get-ChildItem "$env:LOCALAPPDATA\dev.ytm-desktop.$App\logs" | Sort-Object LastWriteTime | Select-Object -Last 1
+    $id = if ($App -eq 'youtube-music') { 'baseline' } else { $App }   # identifier kept from the prototype
+    $f = Get-ChildItem "$env:LOCALAPPDATA\dev.ytm-desktop.$id\logs" | Sort-Object LastWriteTime | Select-Object -Last 1
     Get-Content $f.FullName -Encoding UTF8 | Where-Object { $_ -match 'player: |first playback' } | Select-Object -Last 2
 }
 
 if (-not $SkipIdle) {
     Remove-Item Env:YTM_START_URL -ErrorAction SilentlyContinue
-    foreach ($app in 'baseline', 'hybrid') {
+    foreach ($app in 'youtube-music', 'hybrid') {
         & $bench -Exe (Join-Path $root "target\release\$app.exe") -Seconds $IdleSeconds -Interval $Interval -Warmup 20 -Label "$app-idle" -Gpu -Close
         Start-Sleep 5
     }
@@ -44,7 +45,7 @@ if (-not $SkipIdle) {
 }
 
 $env:YTM_START_URL = $PlayUrl
-foreach ($app in 'baseline', 'hybrid') {
+foreach ($app in 'youtube-music', 'hybrid') {
     $p = Start-Process (Join-Path $root "target\release\$app.exe") -PassThru
     Start-Sleep 60   # page load + pre-roll ads (not signed in) + track start
     Write-Host "$app-playcheck: $(Last-State $app)"

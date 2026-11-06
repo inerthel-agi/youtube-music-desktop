@@ -1,6 +1,6 @@
 # Security notes
 
-Source-only audit of `apps/baseline`, `crates/ytm-core` and `assets` on 2026-11-06. The full run
+Source-only audit of `apps/desktop` (then `apps/baseline`), `crates/ytm-core` and `assets` on 2026-11-06. The full run
 (ledger, records, reports) is kept outside the repository in
 `%USERPROFILE%\security-audit-skill\youtube-music\run-1\`. No target code was executed during the
 audit (no OS sandbox on the audit host).

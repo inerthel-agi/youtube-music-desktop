@@ -5,7 +5,7 @@
 #>
 param([int]$Settle = 45, [int]$Samples = 5)
 $root = Split-Path $PSScriptRoot -Parent
-$exe = Join-Path $root 'target\release\baseline.exe'
+$exe = Join-Path $root 'target\release\youtube-music.exe'
 $base = 'msWebOOUI,msPdfOOUI,msSmartScreenProtection'
 $extra = 'SpareRendererForSitePerProcess,BackForwardCache,Translate,OptimizationHints,MediaRouter,AutofillServerCommunication'
 $sets = [ordered]@{
@@ -16,15 +16,15 @@ $sets = [ordered]@{
     'E B + no GPU'        = "--disable-features=$base,$extra --disable-gpu --disable-gpu-compositing"
 }
 foreach ($name in $sets.Keys) {
-    Get-Process baseline -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process youtube-music -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep 2
     $env:YTM_BROWSER_ARGS = $sets[$name]
     $p = Start-Process $exe -PassThru
     Start-Sleep $Settle
     Write-Host "== $name : $($sets[$name])"
-    & (Join-Path $PSScriptRoot 'mem-breakdown.ps1') -ProcessName baseline -Samples $Samples | Out-String | Write-Host
+    & (Join-Path $PSScriptRoot 'mem-breakdown.ps1') -ProcessName youtube-music -Samples $Samples | Out-String | Write-Host
     $cpu = (Get-Process -Id $p.Id).TotalProcessorTime.TotalSeconds
     Write-Host ("app process CPU time so far: {0:N2} s" -f $cpu)
 }
 Remove-Item Env:YTM_BROWSER_ARGS
-Get-Process baseline -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process youtube-music -ErrorAction SilentlyContinue | Stop-Process -Force

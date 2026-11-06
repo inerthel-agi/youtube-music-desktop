@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ytm-core", "apps/baseline", "apps/hybrid"]
+members = ["crates/ytm-core", "apps/desktop", "apps/hybrid"]
 
 [workspace.package]
 edition = "2024"

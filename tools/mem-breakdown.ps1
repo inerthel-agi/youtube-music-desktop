@@ -3,9 +3,9 @@
   Private working set per WebView2 process type for a running app tree
   (browser, renderer, gpu-process, utility, ...). Samples N times and averages.
 .EXAMPLE
-  .\tools\mem-breakdown.ps1 -ProcessName baseline -Samples 5
+  .\tools\mem-breakdown.ps1 -ProcessName youtube-music -Samples 5
 #>
-param([string]$ProcessName = 'baseline', [int]$Samples = 5, [int]$Interval = 3)
+param([string]$ProcessName = 'youtube-music', [int]$Samples = 5, [int]$Interval = 3)
 $root = (Get-Process $ProcessName -ErrorAction Stop | Sort-Object StartTime | Select-Object -First 1).Id
 $acc = @{}
 for ($n = 0; $n -lt $Samples; $n++) {

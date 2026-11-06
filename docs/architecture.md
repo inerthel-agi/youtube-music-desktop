@@ -4,7 +4,7 @@ Windows 11 YouTube Music player. Priorities used to justify every decision:
 (1) stability, (2) YouTube Music compatibility, (3) low resource use,
 (4) maintainability, (5) user experience.
 
-**Decision (2026-11-06): the MVP builds on `apps/baseline` (Tauri 2 + WebView2).** The GPUI
+**Decision (2026-11-06): the MVP builds on the baseline prototype, now `apps/desktop` (Tauri 2 + WebView2).** The GPUI
 hybrid cost +60 MB private memory and +225 MB commit, has an intermittent shutdown bug, and
 rendered nothing the page does not already show (see `prototype-report.md`). `apps/hybrid` stays
 as a frozen experiment, to revisit once tauri-plugin-gpui is validated on Windows. Native extras
@@ -15,7 +15,7 @@ as a frozen experiment, to revisit once tauri-plugin-gpui is validated on Window
 ```
 crates/ytm-core/   UI-independent: PlayerState, bridge message validation, Command -> JS, start URL. Unit tested.
 apps/hybrid/       Tauri 2 + tauri-plugin-gpui: GPUI-rendered window hosting one child WebView2 (webview_frame).
-apps/baseline/     Tauri 2 + one WebView2 window. Benchmark reference and fallback.
+apps/desktop/      Tauri 2 + one WebView2 window (package `youtube-music`; the prototype's "baseline").
 assets/bridge.js   Script injected into music.youtube.com (shared by both apps).
 tools/bench.ps1    Process-tree RAM/CPU/GPU sampler (works on YTMDesktop too).
 tools/bench-suite.ps1  Idle / playing / minimized runs for both prototypes (+ YTMDesktop idle).
@@ -76,8 +76,8 @@ Decisions:
   (`ytm` = music.youtube.com, `options` = local page laid over it while open, destroyed on close).
   The local page keeps its own capability; music.youtube.com gets no settings access.
 - **Tray + close-to-tray** (default on), **lazy mini-player** (a small local page, created on
-  demand and destroyed on close), **settings** in `%APPDATA%dev.ytm-desktop.baselinesettings.json`.
-- **WebView2 robustness** (`apps/baseline/src/win.rs`): renderer crash or hang -> page reload
+  demand and destroyed on close), **settings** in `%APPDATA%\dev.ytm-desktop.baseline\settings.json`.
+- **WebView2 robustness** (`apps/desktop/src/win.rs`): renderer crash or hang -> page reload
   (verified: renderer killed, reloaded in about 1 s); browser process exit -> app restart. While
   hidden in the tray, WebView2 memory target is set to low (measured: private WS 335 -> 309 MB).
 - **`YTM_START_URL`** (accepted only under `https://music.youtube.com/`) makes benchmarks play the
@@ -90,8 +90,8 @@ Decisions:
 
 ```
 cargo test -p ytm-core
-cargo build --release -p baseline -p hybrid
-target\release\hybrid.exe        # or baseline.exe
+cargo build --release -p youtube-music -p hybrid
+target\release\hybrid.exe        # or youtube-music.exe
 $env:YTM_LOG="debug"             # optional log level (default info)
 ```
 

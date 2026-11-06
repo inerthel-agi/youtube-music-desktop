@@ -3,7 +3,7 @@
 //! layout through `webview_frame`. The webview is created once and never
 //! recreated. No GPUI player bar: YouTube Music already shows its own, and a
 //! second one would duplicate it. GPUI is kept for future native-only surfaces
-//! (title bar, mini-player) and to measure its cost against `baseline`.
+//! (title bar, mini-player) and to measure its cost against the baseline app (`apps/desktop`).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::OnceLock;

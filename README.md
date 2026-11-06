@@ -7,23 +7,38 @@ and the system WebView2, without Electron or Node.js.
 
 - Windows 11 (on Windows 10 the window corner and border styling is skipped).
 - Microsoft Edge WebView2 Runtime (included with Windows 11).
-- Rust 1.88 or later with the MSVC toolchain (`stable-x86_64-pc-windows-msvc`).
-- Visual Studio Build Tools with the "Desktop development with C++" workload.
+- To build from source: Rust 1.88 or later with the MSVC toolchain
+  (`stable-x86_64-pc-windows-msvc`) and Visual Studio Build Tools with the "Desktop development
+  with C++" workload.
 
 ## Install
+
+Download from the [Releases](https://github.com/inerthel-agi/youtube-music-desktop/releases) page:
+
+- `YouTube Music_<version>_x64-setup.exe`: per-user installer (no admin rights), with a Start
+  menu entry and an uninstaller.
+- `youtube-music-<version>-windows-x64.zip`: portable `youtube-music.exe`.
+
+The files are not code-signed, so Windows SmartScreen shows a warning on first launch
+("More info", then "Run anyway").
+
+Build from source:
 
 ```
 git clone https://github.com/inerthel-agi/youtube-music-desktop.git
 cd youtube-music-desktop
-cargo build --release -p baseline
+cargo build --release -p youtube-music
 ```
 
-The executable is `target\release\baseline.exe`.
+The executable is `target\release\youtube-music.exe`. The installer is built with
+`cargo tauri build` in `apps\desktop` (needs `tauri-cli` 2).
 
 ## Usage
 
+Start "YouTube Music" from the Start menu, or run:
+
 ```
-target\release\baseline.exe
+target\release\youtube-music.exe
 ```
 
 - Sign in with the "Sign in" button of the page. The session is kept in
@@ -106,14 +121,15 @@ Logs are written to `%LOCALAPPDATA%\dev.ytm-desktop.baseline\logs\` (2 MB per fi
 ```
 cargo test -p ytm-core
 .\tools\bench-suite.ps1
-.\tools\close-loop.ps1 -App baseline
-.\tools\mem-breakdown.ps1 -ProcessName baseline
+.\tools\close-loop.ps1 -App youtube-music
+.\tools\mem-breakdown.ps1 -ProcessName youtube-music
 .\tools\mem-final.ps1
 ```
 
 `tools\bench-suite.ps1` writes CSV files and summaries to `bench\`. The measured results and
 the architecture decision are in `docs\prototype-report.md` and `docs\architecture.md`.
-`apps\hybrid` is a frozen GPUI experiment and is not part of the app.
+The data folders keep the identifier `dev.ytm-desktop.baseline` from the prototype, so settings
+and the Google session survive updates. `apps\hybrid` is a frozen GPUI experiment and is not part of the app.
 
 ## Limitations
 
