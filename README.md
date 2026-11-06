@@ -15,7 +15,7 @@ and the system WebView2, without Electron or Node.js.
 
 Download from the [Releases](https://github.com/inerthel-agi/youtube-music-desktop/releases) page:
 
-- `YouTube Music_<version>_x64-setup.exe`: per-user installer (no admin rights), with a Start
+- `youtube-music-<version>-x64-setup.exe`: per-user installer (no admin rights), with a Start
   menu entry and an uninstaller.
 - `youtube-music-<version>-windows-x64.zip`: portable `youtube-music.exe`.
 
