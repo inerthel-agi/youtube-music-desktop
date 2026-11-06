@@ -109,6 +109,9 @@ Private working set of the whole tree, signed in, one run per case (page content
 | Options > Memory saver (`--js-flags=--lite-mode --renderer-process-limit=1`) | 287 MB | 266 MB |
 | Memory saver + hardware acceleration off | 230 MB | 207 MB |
 
+- Memory saver no longer uses V8 `--lite-mode` (since 0.1.2): it implies `--jitless`, which removes
+  WebAssembly and slows JS about 5x, and YouTube Music then left its top bar and player bar empty.
+  The measured gain (0 to 21 MB) was within the run-to-run noise.
 - The YouTube Music page renderer is the largest part (about 160–230 MB) and is out of the app's control.
 - Hardware acceleration is off by default since 2026-11-06: about -50 MB (GPU process 64 -> 15 MB). The playing CPU was
   measured with the window in the background, so it does not show the cost of software video decoding.

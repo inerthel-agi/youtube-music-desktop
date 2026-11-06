@@ -2,6 +2,14 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-11-06
+
+### Fixed
+
+- With Options > Memory saver on, the top bar (search) and the player bar could stay empty. The
+  option no longer turns on V8 lite mode, which disabled WebAssembly and slowed the page about 5x.
+  It still limits WebView2 to one renderer process.
+
 ## [0.1.1] - 2026-11-06
 
 ### Fixed
@@ -46,5 +54,6 @@ First release.
 - Settings export and import.
 - Per-user NSIS installer and portable zip.
 
+[0.1.2]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/inerthel-agi/youtube-music-desktop/releases/tag/v0.1.0

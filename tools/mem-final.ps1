@@ -7,7 +7,7 @@ param([int]$Settle = 45, [string]$PlayUrl = 'https://music.youtube.com/watch?v=d
 $root = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $root 'target\release\youtube-music.exe'
 $def = '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection'
-$saver = "$def --js-flags=--lite-mode --renderer-process-limit=1"
+$saver = "$def --renderer-process-limit=1"
 $sets = [ordered]@{
     'default'             = $def
     'memory saver'        = $saver

@@ -79,7 +79,7 @@ falls back to the defaults. Keys marked "restart" apply after Options > Restart.
 | `start_hidden` | bool | `false` | When started with `--autostart`, stays in the notification area. |
 | `close_to_tray` | bool | `true` | Closing the window hides it instead of quitting. |
 | `hardware_acceleration` | bool | `false` | Off adds `--disable-gpu --disable-gpu-compositing` to WebView2: about 50 MB less RAM, video decoded on the CPU (restart). |
-| `memory_saver` | bool | `false` | Adds `--js-flags=--lite-mode --renderer-process-limit=1` to WebView2 (restart). |
+| `memory_saver` | bool | `false` | Adds `--renderer-process-limit=1` to WebView2 (restart). |
 | `audio.speed` | number | `1.0` | Playback rate, 0.5 to 1.5. Ads always play at 1.0. |
 | `audio.preserve_pitch` | bool | `true` | Off changes the pitch with the speed ("slowed", "nightcore"). |
 | `audio.reverb` | number | `0` | Reverb level, 0 to 1. |

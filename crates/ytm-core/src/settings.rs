@@ -197,8 +197,9 @@ impl Settings {
             args.push_str(" --disable-gpu --disable-gpu-compositing");
         }
         if self.memory_saver {
-            // Measured gain is small and page-dependent (0 to 20 MB private WS).
-            args.push_str(" --js-flags=--lite-mode --renderer-process-limit=1");
+            // No V8 --lite-mode: it implies --jitless, which removes WebAssembly and
+            // slows JS about 5x; YouTube Music then leaves its top and player bars empty.
+            args.push_str(" --renderer-process-limit=1");
         }
         if self.language != "system" {
             args.push_str(" --lang=");
@@ -335,7 +336,8 @@ mod tests {
             memory_saver: true,
             ..d.clone()
         };
-        assert!(saver.browser_args().contains("--lite-mode"));
+        assert!(saver.browser_args().contains("--renderer-process-limit=1"));
+        assert!(!saver.browser_args().contains("--js-flags"));
         assert!(saver.needs_restart(&d));
         assert!(s.browser_args().starts_with("--disable-features=msWebOOUI"));
         assert!(s.needs_restart(&d));
