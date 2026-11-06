@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ytm-remote",
+  "description": "music.youtube.com may report player state and drive its own frameless window (drag, minimize, maximize, close-to-tray). Nothing else.",
+  "webviews": ["ytm"],
+  "remote": { "urls": ["https://music.youtube.com/*"] },
+  "permissions": [
+    "allow-player-event",
+    "allow-window-control",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}

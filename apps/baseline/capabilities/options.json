@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "options",
+  "description": "Local Options page laid over the main window: settings, presets, restart, and the window's own caption buttons / drag.",
+  "webviews": ["options"],
+  "permissions": [
+    "allow-get-settings",
+    "allow-update-settings",
+    "allow-audio-preset",
+    "allow-restart-app",
+    "allow-eq-preset",
+    "allow-open-url",
+    "allow-get-sleep-timer",
+    "allow-set-sleep-timer",
+    "allow-window-control",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}

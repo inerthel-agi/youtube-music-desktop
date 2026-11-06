@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Options</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #030303; --nav: #0a0a0a; --surface: #141414; --surface-2: #212121; --line: #272727;
+    --fg: #f1f1f1; --muted: #aaaaaa; --accent: #ff0033; --focus: #3ea6ff; --error: #ff6b6b;
+    /* Motion: transform and opacity only, so the compositor runs it without layout work. */
+    --ease: cubic-bezier(.2, .8, .2, 1); --spring: cubic-bezier(.34, 1.4, .64, 1);
+  }
+  @keyframes fade { from { opacity: 0; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  nav, main { animation: fade .22s var(--ease) both; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+  body { font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+         display: grid; grid-template-rows: 48px 1fr; grid-template-columns: 240px 1fr; }
+
+  /* Header: drag region + back + caption buttons (the window is frameless) */
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding-left: 8px;
+           border-bottom: 1px solid var(--line); user-select: none; }
+  .back { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 14px 0 10px; border: 0;
+          border-radius: 18px; background: none; color: var(--fg); font: inherit; font-weight: 500; cursor: pointer; }
+  .back { transition: background-color .15s var(--ease), transform .12s var(--ease); }
+  .back:hover { background: var(--surface-2); }
+  .back:active { transform: scale(.97); }
+  .drag { flex: 1; align-self: stretch; }
+  .caption { display: flex; align-self: flex-start; height: 32px; }
+  .caption button { width: 46px; height: 32px; border: 0; background: none; color: var(--fg); display: grid; place-items: center; }
+  .caption button { transition: background-color .12s var(--ease); }
+  .caption button:hover { background: rgba(255,255,255,.1); }
+  .caption button.close:hover { background: #c42b1c; }
+  .caption svg { width: 10px; height: 10px; fill: currentColor; fill-rule: evenodd; }
+  svg.i { width: 22px; height: 22px; fill: currentColor; flex: none; }
+
+  /* Category navigation, styled like the YouTube Music sidebar */
+  nav { position: relative; background: var(--nav); padding: 16px 12px; border-right: 1px solid var(--line); overflow-y: auto; }
+  /* Highlight that slides to the selected category (moved by showPage). */
+  .nav-pill { position: absolute; top: 0; left: 0; border-radius: 8px; background: var(--surface-2); pointer-events: none;
+              transition: transform .3s var(--ease), width .3s var(--ease), height .3s var(--ease); }
+  .nav-pill.instant { transition: none; }
+  nav h1 { font-size: 20px; font-weight: 600; padding: 4px 12px 16px; }
+  nav button { display: flex; align-items: center; gap: 16px; width: 100%; height: 46px; padding: 0 14px;
+               border: 0; border-radius: 8px; background: none; color: var(--fg); font: inherit; font-size: 15px;
+               text-align: left; cursor: pointer; position: relative;
+               transition: background-color .15s var(--ease), transform .12s var(--ease); }
+  nav button:hover { background: rgba(255,255,255,.04); }
+  nav button:active { transform: scale(.98); }
+  nav button[aria-current=true] { font-weight: 600; }
+  nav button .i { transition: transform .25s var(--spring); }
+  nav button[aria-current=true] .i { transform: scale(1.08); }
+  nav hr { border: 0; border-top: 1px solid var(--line); margin: 10px 4px; }
+
+  main { overflow-y: auto; padding: 28px 32px 112px; }
+  .page { max-width: 720px; margin: 0 auto; }
+  .page[hidden] { display: none; }
+  /* Page change: the title, then each card, rise in one after another. */
+  .page > * { animation: rise .32s var(--ease) both; }
+  .page > :nth-child(2) { animation-delay: 30ms; }
+  .page > :nth-child(3) { animation-delay: 60ms; }
+  .page > :nth-child(4) { animation-delay: 90ms; }
+  .page > :nth-child(5) { animation-delay: 120ms; }
+  .page > :nth-child(n+6) { animation-delay: 150ms; }
+  h2 { font-size: 24px; font-weight: 600; }
+  .lead { color: var(--muted); margin: 4px 0 20px; }
+  .card { background: var(--surface); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+  .row { display: flex; align-items: center; gap: 16px; padding: 14px 18px; min-height: 60px;
+         transition: background-color .15s var(--ease), opacity .2s var(--ease); }
+  .row:hover { background: rgba(255,255,255,.025); }
+  .row + .row { border-top: 1px solid var(--line); }
+  .text { flex: 1; min-width: 0; }
+  .label { font-weight: 500; }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .row.disabled { opacity: .45; }
+  select { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+           padding: 7px 10px; font: inherit; min-width: 170px; transition: border-color .15s var(--ease); }
+  select:hover { border-color: #3a3a3a; }
+  .switch { position: relative; width: 40px; height: 22px; flex: none; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  .switch span { position: absolute; inset: 0; border-radius: 11px; background: #3a3a3a;
+                 transition: background-color .22s var(--ease); pointer-events: none; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 8px;
+                        background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35);
+                        transition: transform .28s var(--spring), width .15s var(--ease); }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(18px); }
+  /* Pressed: the knob stretches toward where it will go. */
+  .switch input:active + span::after { width: 20px; }
+  .switch input:checked:active + span::after { transform: translateX(14px); }
+  .switch input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .slider { display: flex; align-items: center; gap: 10px; flex: none; }
+  input[type=range] { width: 200px; accent-color: var(--accent); }
+  output { width: 58px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 18px; }
+  .chip { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 16px;
+          padding: 6px 14px; font: inherit; cursor: pointer;
+          transition: background-color .18s var(--ease), color .18s var(--ease), border-color .18s var(--ease), transform .12s var(--ease); }
+  .chip:hover { background: #2c2c2c; }
+  .chip:active { transform: scale(.95); }
+  .chip[aria-pressed=true] { background: var(--fg); color: #0f0f0f; border-color: var(--fg); }
+  .badge { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; margin-left: 8px; }
+  .note { color: var(--muted); font-size: 12.5px; padding: 0 4px; }
+  .error { color: var(--error); font-size: 12.5px; margin-top: 4px; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  #restart { position: fixed; left: 264px; right: 24px; bottom: 20px; display: flex; align-items: center; gap: 12px;
+             max-width: 720px; margin: 0 auto; background: var(--surface-2); border: 1px solid var(--line);
+             border-radius: 12px; padding: 12px 16px; box-shadow: 0 8px 24px rgba(0,0,0,.45);
+             opacity: 0; transform: translateY(16px); visibility: hidden; pointer-events: none;
+             transition: opacity .25s var(--ease), transform .3s var(--ease), visibility 0s linear .3s; }
+  #restart.show { opacity: 1; transform: none; visibility: visible; pointer-events: auto;
+                  transition: opacity .25s var(--ease), transform .3s var(--spring), visibility 0s; }
+  #restart p { flex: 1; }
+  .primary { background: var(--fg); color: #0f0f0f; border: 0; border-radius: 18px; padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer;
+             transition: transform .12s var(--ease), opacity .15s var(--ease); }
+  .primary:hover { opacity: .9; }
+  .primary:active, .secondary:active:not(:disabled) { transform: scale(.96); }
+  .secondary { background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 18px;
+               padding: 7px 16px; font: inherit; font-weight: 500; cursor: pointer;
+               transition: background-color .15s var(--ease), transform .12s var(--ease), opacity .2s var(--ease); }
+  .secondary:hover:not(:disabled) { background: #2c2c2c; }
+  .secondary:disabled { opacity: .45; cursor: default; }
+
+  /* Equalizer: vertical sliders */
+  .eq { display: grid; grid-template-columns: 56px repeat(10, 1fr); gap: 4px; padding: 18px 12px 14px; }
+  .band { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .band input[type=range] { writing-mode: vertical-lr; direction: rtl; width: 28px; height: 150px; }
+  .band .db { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .band .hz { font-size: 12px; font-weight: 500; }
+  .band.pre { border-right: 1px solid var(--line); padding-right: 4px; }
+
+  /* Hotkeys */
+  .hotkey { width: 190px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+            padding: 7px 10px; font: inherit; text-align: center; caret-color: transparent; cursor: pointer; }
+  .hotkey { transition: border-color .15s var(--ease), background-color .15s var(--ease); }
+  .hotkey:focus { border-color: var(--focus); outline: none; background: #262626; }
+  .num { width: 110px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+         padding: 7px 10px; font: inherit; font-variant-numeric: tabular-nums; }
+  .mono { font-family: "Cascadia Mono", Consolas, monospace; user-select: text; }
+  .icon-btn { width: 32px; height: 32px; border: 0; border-radius: 50%; background: none; color: var(--muted);
+              display: grid; place-items: center; cursor: pointer; flex: none; }
+  .icon-btn { transition: background-color .15s var(--ease), color .15s var(--ease), transform .12s var(--ease); }
+  .icon-btn:hover { background: var(--surface-2); color: var(--fg); }
+  .icon-btn:active { transform: scale(.9); }
+  .icon-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+  /* User equalizer presets: chip with a name button and a delete button */
+  .chip.mine { display: inline-flex; align-items: center; padding: 0; }
+  .chip.mine button { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+  .chip-name { padding: 6px 4px 6px 14px; }
+  .chip-del { width: 26px; height: 26px; margin-right: 3px; border-radius: 50%; display: grid; place-items: center;
+              color: var(--muted) !important; transition: background-color .15s var(--ease), color .15s var(--ease); }
+  .chip-del:hover { background: rgba(255,255,255,.08) !important; color: var(--fg) !important; }
+  .chip-del svg { width: 12px; height: 12px; fill: currentColor; }
+  .name { width: 190px; background: var(--surface-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+          padding: 7px 10px; font: inherit; transition: border-color .15s var(--ease); }
+  .name:focus { border-color: var(--focus); outline: none; }
+  .chips:empty { display: none; }
+
+  /* About */
+  .about { display: flex; align-items: center; gap: 16px; padding: 20px 18px; }
+  .logo { width: 56px; height: 56px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; flex: none; }
+  .logo svg { width: 26px; height: 26px; fill: #fff; margin-left: 3px; }
+  .about h3 { font-size: 18px; font-weight: 600; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 18px; }
+  dl { display: grid; grid-template-columns: 180px 1fr; gap: 10px 16px; padding: 16px 18px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 760px) {
+    body { grid-template-columns: 1fr; grid-template-rows: 48px auto 1fr; }
+    nav { border-right: 0; border-bottom: 1px solid var(--line); display: flex; gap: 4px; overflow-x: auto; padding: 8px; }
+    nav h1, nav hr { display: none; }
+    nav button { width: auto; height: 40px; flex: none; gap: 8px; }
+    main { padding: 20px 16px 112px; }
+    #restart { left: 16px; right: 16px; }
+    input[type=range] { width: 130px; }
+    .eq { grid-template-columns: repeat(11, 1fr); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <button class="back" id="back" aria-label="Back to YouTube Music">
+      <svg class="i" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+      <span data-t="back">YouTube Music</span>
+    </button>
+    <div class="drag" data-tauri-drag-region></div>
+    <div class="caption">
+      <button data-win="minimize" aria-label="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5h10v1H0z"/></svg></button>
+      <button data-win="toggle_maximize" aria-label="Maximize"><svg viewBox="0 0 10 10"><path d="M0 0v10h10V0zm1 1h8v8H1z"/></svg></button>
+      <button data-win="close" class="close" aria-label="Close"><svg viewBox="0 0 10 10"><path d="M.7 0 5 4.3 9.3 0l.7.7L5.7 5 10 9.3l-.7.7L5 5.7.7 10 0 9.3 4.3 5 0 .7z"/></svg></button>
+    </div>
+  </header>
+
+  <nav aria-label="Options">
+    <span class="nav-pill instant" aria-hidden="true"></span>
+    <h1 data-t="title">Options</h1>
+    <button data-page="general"><svg class="i" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg><span data-t="general">General</span></button>
+    <button data-page="performance"><svg class="i" viewBox="0 0 24 24"><path d="M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z"/></svg><span data-t="performance">Performance</span></button>
+    <button data-page="playback"><svg class="i" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-2 14.5v-9l6 4.5-6 4.5z"/></svg><span data-t="playback">Playback</span></button>
+    <button data-page="equalizer"><svg class="i" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zm0-12v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z" transform="rotate(90 12 12)"/></svg><span data-t="equalizer">Equalizer</span></button>
+    <button data-page="sound"><svg class="i" viewBox="0 0 24 24"><path d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z"/></svg><span data-t="sound">Sound and effects</span></button>
+    <button data-page="shortcuts"><svg class="i" viewBox="0 0 24 24"><path d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg><span data-t="shortcuts">Shortcuts</span></button>
+    <button data-page="discord"><svg class="i" viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg><span>Discord</span></button>
+    <button data-page="advanced"><svg class="i" viewBox="0 0 24 24"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg><span data-t="advanced">Advanced</span></button>
+    <hr>
+    <button data-page="about"><svg class="i" viewBox="0 0 24 24"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></svg><span data-t="about">About</span></button>
+  </nav>
+
+  <main>
+    <section class="page" id="general">
+      <h2 data-t="general">General</h2>
+      <p class="lead" data-t="general_lead"></p>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label"><span data-t="language">Language</span><span class="badge" data-t="restart_badge">Restart</span></div>
+          <div class="hint" data-t="language_hint"></div></div>
+          <select id="language" data-key="language"></select></div>
+      </div>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="startup">Start with Windows</div></div>
+          <label class="switch"><input type="checkbox" data-key="launch_at_startup"><span></span></label></div>
+        <div class="row" id="row-hidden"><div class="text"><div class="label" data-t="start_hidden">Start in the notification area</div>
+          <div class="hint" data-t="start_hidden_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="start_hidden"><span></span></label></div>
+        <div class="row"><div class="text"><div class="label" data-t="close_to_tray">Close to the notification area</div>
+          <div class="hint" data-t="close_to_tray_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="close_to_tray"><span></span></label></div>
+      </div>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="notify">Notify on track change</div>
+          <div class="hint" data-t="notify_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="notify_track_change"><span></span></label></div>
+      </div>
+    </section>
+
+    <section class="page" id="performance" hidden>
+      <h2 data-t="performance">Performance</h2>
+      <p class="lead" data-t="performance_lead"></p>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label"><span data-t="hw">Hardware acceleration</span><span class="badge" data-t="restart_badge">Restart</span></div>
+          <div class="hint" data-t="hw_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="hardware_acceleration"><span></span></label></div>
+        <div class="row"><div class="text"><div class="label"><span data-t="saver">Memory saver</span><span class="badge" data-t="restart_badge">Restart</span></div>
+          <div class="hint" data-t="saver_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="memory_saver"><span></span></label></div>
+      </div>
+    </section>
+
+    <section class="page" id="playback" hidden>
+      <h2 data-t="playback">Playback</h2>
+      <p class="lead" data-t="playback_lead"></p>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="speed">Speed</div></div>
+          <div class="slider"><input type="range" min="0.5" max="1.5" step="0.05" data-key="audio.speed" aria-label="Speed"><output data-for="audio.speed"></output></div></div>
+        <div class="row"><div class="text"><div class="label" data-t="pitch">Keep pitch</div>
+          <div class="hint" data-t="pitch_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="audio.preserve_pitch"><span></span></label></div>
+      </div>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="sleep">Sleep timer</div>
+          <div class="hint" id="sleep-status"></div></div>
+          <select id="sleep">
+            <option value="off" data-t="sleep_off">Off</option>
+            <option value="end" data-t="sleep_end">End of track</option>
+            <option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option>
+            <option value="60">1 h</option><option value="90">1 h 30</option><option value="120">2 h</option>
+          </select></div>
+        <div class="row"><div class="text"><div class="label" data-t="resume">Resume the last track on start</div>
+          <div class="hint" data-t="resume_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="resume_last"><span></span></label></div>
+        <div class="row"><div class="text"><div class="label" data-t="pause_lock">Pause when Windows is locked</div></div>
+          <label class="switch"><input type="checkbox" data-key="pause_on_lock"><span></span></label></div>
+        <div class="row"><div class="text"><div class="label" data-t="pause_device">Pause when headphones are unplugged</div>
+          <div class="hint" data-t="pause_device_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="pause_on_device_change"><span></span></label></div>
+      </div>
+      <p class="note" data-t="ads_note"></p>
+    </section>
+
+    <section class="page" id="equalizer" hidden>
+      <h2 data-t="equalizer">Equalizer</h2>
+      <p class="lead" data-t="eq_lead"></p>
+      <div class="card"><div class="chips" id="eq-presets"></div></div>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="my_presets">My presets</div>
+          <div class="hint" id="my-presets-hint" data-t="my_presets_hint"></div></div>
+          <input class="name" id="preset-name" maxlength="32" aria-label="Preset name">
+          <button class="secondary" id="preset-save" data-t="save">Save</button></div>
+        <div class="chips" id="my-presets"></div>
+      </div>
+      <div class="card"><div class="eq" id="eq"></div></div>
+      <p class="note" data-t="eq_note"></p>
+    </section>
+
+    <section class="page" id="sound" hidden>
+      <h2 data-t="sound">Sound and effects</h2>
+      <p class="lead" data-t="sound_lead"></p>
+      <div class="card"><div class="chips" id="presets"></div></div>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="reverb">Reverb</div></div>
+          <div class="slider"><input type="range" min="0" max="1" step="0.05" data-key="audio.reverb" aria-label="Reverb"><output data-for="audio.reverb"></output></div></div>
+        <div class="row"><div class="text"><div class="label" data-t="bass">Bass boost</div></div>
+          <div class="slider"><input type="range" min="0" max="12" step="1" data-key="audio.bass_db" aria-label="Bass boost"><output data-for="audio.bass_db"></output></div></div>
+        <div class="row"><div class="text"><div class="label" data-t="spatial">8D sound</div>
+          <div class="hint" data-t="spatial_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="audio.spatial"><span></span></label></div>
+      </div>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="balance">Balance</div></div>
+          <div class="slider"><input type="range" min="-1" max="1" step="0.05" data-key="audio.balance" aria-label="Balance"><output data-for="audio.balance"></output></div></div>
+        <div class="row"><div class="text"><div class="label" data-t="mono">Mono</div>
+          <div class="hint" data-t="mono_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="audio.mono"><span></span></label></div>
+        <div class="row"><div class="text"><div class="label" data-t="normalize">Normalize volume</div>
+          <div class="hint" data-t="normalize_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="audio.normalize"><span></span></label></div>
+        <div class="row"><div class="text"><div class="label" data-t="limiter">Volume limiter</div>
+          <div class="hint" data-t="limiter_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="audio.limiter"><span></span></label></div>
+      </div>
+      <p class="note" data-t="fx_hint"></p>
+    </section>
+
+    <section class="page" id="shortcuts" hidden>
+      <h2 data-t="shortcuts">Shortcuts</h2>
+      <p class="lead" data-t="shortcuts_lead"></p>
+      <div class="card" id="hotkeys"></div>
+      <p class="note" data-t="shortcuts_note"></p>
+    </section>
+
+    <section class="page" id="discord" hidden>
+      <h2>Discord</h2>
+      <p class="lead" data-t="discord_lead"></p>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="discord">Show what I'm listening to</div>
+          <div class="hint" data-t="discord_hint"></div></div>
+          <label class="switch"><input type="checkbox" data-key="discord"><span></span></label></div>
+      </div>
+    </section>
+
+    <section class="page" id="advanced" hidden>
+      <h2 data-t="advanced">Advanced</h2>
+      <p class="lead" data-t="advanced_lead"></p>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="obs">OBS widget</div>
+          <div class="hint" data-t="obs_hint"></div><div class="error" id="obs-error" hidden></div></div>
+          <label class="switch"><input type="checkbox" data-key="obs_widget"><span></span></label></div>
+        <div class="row" id="row-obs-port"><div class="text"><div class="label" data-t="obs_port">Port</div>
+          <div class="hint" data-t="obs_port_hint"></div></div>
+          <input type="number" class="num" min="1024" max="65535" step="1" data-key="obs_port" aria-label="Port"></div>
+        <div class="row" id="row-obs-url"><div class="text"><div class="label" data-t="obs_url">Browser source URL</div>
+          <div class="hint mono" id="obs-url"></div></div>
+          <button class="secondary" id="obs-copy" data-t="copy">Copy</button>
+          <button class="secondary" id="obs-open" data-t="open">Open</button></div>
+      </div>
+      <p class="note" data-t="obs_note"></p>
+    </section>
+
+    <section class="page" id="about" hidden>
+      <h2 data-t="about">About</h2>
+      <p class="lead" data-t="about_lead"></p>
+      <div class="card">
+        <div class="about">
+          <div class="logo"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+          <div><h3>YouTube Music Desktop</h3><div class="hint" data-t="about_tag"></div></div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="github"><span>GitHub</span></button>
+          <button class="secondary" id="issues" data-t="report">Report a problem</button>
+        </div>
+        <div class="hint" id="no-repo" style="padding: 0 18px 16px" data-t="no_repo" hidden></div>
+      </div>
+      <div class="card">
+        <dl>
+          <dt data-t="version">Version</dt><dd id="version"></dd>
+          <dt>WebView2</dt><dd id="webview"></dd>
+          <dt data-t="license">License</dt><dd>MIT</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <div class="row"><div class="text"><div class="label" data-t="backup">Settings backup</div>
+          <div class="hint" id="backup-status" role="status" data-t="backup_hint"></div></div>
+          <button class="secondary" id="export" data-t="export">Export</button>
+          <button class="secondary" id="import" data-t="import">Import</button>
+          <input type="file" id="import-file" accept=".json,application/json" hidden></div>
+      </div>
+      <p class="note" data-t="about_note"></p>
+    </section>
+  </main>
+
+  <div id="restart" role="status"><p data-t="restart_msg">Restart to apply the performance and language changes.</p>
+    <button class="primary" id="restart-btn" data-t="restart_now">Restart now</button></div>
+
+<script>
+const T = {
+  en: {
+    back: 'YouTube Music', title: 'Options', general: 'General', language: 'Language', system: 'System',
+    general_lead: 'Language, startup, window and notifications.',
+    language_hint: 'App and YouTube Music interface.', startup: 'Start with Windows',
+    start_hidden: 'Start in the notification area', start_hidden_hint: 'Only when started with Windows.',
+    close_to_tray: 'Close to the notification area', close_to_tray_hint: 'The close button hides the window; music keeps playing.',
+    notify: 'Notify on track change', notify_hint: 'Windows notification with the title and artist, when the window is not in front.',
+    performance: 'Performance', performance_lead: 'Memory and graphics. Changes apply after a restart.',
+    hw: 'Hardware acceleration', restart_badge: 'Restart',
+    hw_hint: 'Uses the GPU for video and rendering. Off saves about 50 MB of RAM but uses more CPU.',
+    saver: 'Memory saver', saver_hint: 'Slightly less RAM (0 to 20 MB measured). Pages can be a little slower.',
+    playback: 'Playback', playback_lead: 'Speed, sleep timer and automatic pause.', speed: 'Speed', pitch: 'Keep pitch',
+    pitch_hint: 'Off gives the "slowed" or "nightcore" sound when the speed changes.',
+    sleep: 'Sleep timer', sleep_off: 'Off', sleep_end: 'End of track', sleep_until: 'Pauses at {t}', sleep_track: 'Pauses at the end of this track',
+    resume: 'Resume the last track on start', resume_hint: 'Opens it paused, at the same position.',
+    pause_lock: 'Pause when Windows is locked', pause_device: 'Pause when headphones are unplugged',
+    pause_device_hint: 'When an audio output disappears.',
+    ads_note: 'Ads always play at normal speed.',
+    equalizer: 'Equalizer', eq_lead: 'Ten bands from 31 Hz to 16 kHz, ±12 dB.', preamp: 'Pre',
+    eq_note: 'Lower the preamp when boosting several bands, to avoid distortion.',
+    e_flat: 'Flat', e_bass: 'Bass', e_rock: 'Rock', e_pop: 'Pop', e_vocal: 'Vocal', e_classical: 'Classical', e_electronic: 'Electronic',
+    sound: 'Sound and effects', sound_lead: 'Effects and output applied to the music.',
+    reverb: 'Reverb', bass: 'Bass boost', normalize: 'Normalize volume', normalize_hint: 'Evens out loud and quiet tracks.',
+    spatial: '8D sound', spatial_hint: 'The sound slowly circles around you. Best with headphones.',
+    balance: 'Balance', mono: 'Mono', mono_hint: 'Same sound in both ears.',
+    limiter: 'Volume limiter', limiter_hint: 'Caps peaks just below the maximum level.',
+    fx_hint: 'Ads always play unchanged in speed. Effects use a little extra CPU while on.',
+    shortcuts: 'Shortcuts', shortcuts_lead: 'Global shortcuts, active even when the app is in the background.',
+    shortcuts_note: 'Click a field, then press the keys. At least Ctrl, Alt, Shift or Win. Backspace clears.',
+    hk_play_pause: 'Play / Pause', hk_next: 'Next track', hk_previous: 'Previous track', hk_volume_up: 'Volume up', hk_volume_down: 'Volume down',
+    hk_like: 'Like', hk_dislike: 'Dislike', hk_mute: 'Mute / unmute', hk_shuffle: 'Shuffle', hk_repeat: 'Repeat', hk_show_hide: 'Show / hide the window',
+    my_presets: 'My presets', my_presets_hint: 'Saves the current bands and preamp under a name.', preset_name: 'Preset name',
+    save: 'Save', delete: 'Delete', preset_limit: 'Up to 24 presets. Delete one first.',
+    backup: 'Settings backup', backup_hint: 'Export to the Downloads folder, or import a saved file. Window position and last track are not included.',
+    export: 'Export', import: 'Import', exported: 'Saved as youtube-music-settings.json in Downloads.', imported: 'Settings imported.',
+    import_failed: 'This file is not a valid settings file.',
+    hk_none: 'None', hk_press: 'Press keys…', hk_need_mod: 'Add Ctrl, Alt, Shift or Win.', hk_taken: 'Already used by another app.',
+    discord_lead: 'Shows the current track on your Discord profile (Stable, PTB and Canary).',
+    discord: 'Show what I\'m listening to', discord_hint: 'Discord desktop must be running. Reconnects after an account switch.',
+    advanced: 'Advanced', advanced_lead: 'Integrations for streaming.',
+    obs: 'OBS widget', obs_hint: 'Shows the current track in OBS through a Browser source. Reachable from this PC only.',
+    obs_port: 'Port', obs_port_hint: 'From 1024 to 65535.', obs_url: 'Browser source URL',
+    obs_failed: 'Port {p} cannot be used, probably by another app. Choose another port.',
+    copy: 'Copy', copied: 'Copied', open: 'Open',
+    obs_note: 'In OBS: Sources, +, Browser. Paste the URL, width 500, height 120. The background is transparent. The card hides during ads and when nothing is playing.',
+    about: 'About', about_lead: 'Version and project links.', about_tag: 'Desktop app for YouTube Music, built with Tauri and WebView2.',
+    report: 'Report a problem', no_repo: 'The project page is not published yet.', version: 'Version', license: 'License',
+    about_note: 'Not affiliated with YouTube or Google.',
+    restart_msg: 'Restart to apply the performance and language changes.', restart_now: 'Restart now',
+    p_off: 'None', p_slowed: 'Slowed', p_slowed_reverb: 'Slowed + reverb', p_nightcore: 'Nightcore',
+    p_bass_boost: 'Bass boost', p_concert_hall: 'Concert hall',
+  },
+  fr: {
+    back: 'YouTube Music', title: 'Options', general: 'Général', language: 'Langue', system: 'Système',
+    general_lead: 'Langue, démarrage, fenêtre et notifications.',
+    language_hint: 'Interface de l\'app et de YouTube Music.', startup: 'Lancer au démarrage de Windows',
+    start_hidden: 'Démarrer dans la zone de notification', start_hidden_hint: 'Seulement au démarrage de Windows.',
+    close_to_tray: 'Fermer dans la zone de notification', close_to_tray_hint: 'La croix masque la fenêtre ; la musique continue.',
+    notify: 'Notifier au changement de morceau', notify_hint: 'Notification Windows avec le titre et l\'artiste, quand la fenêtre n\'est pas au premier plan.',
+    performance: 'Performances', performance_lead: 'Mémoire et affichage. Les changements s\'appliquent au redémarrage.',
+    hw: 'Accélération matérielle', restart_badge: 'Redémarrage',
+    hw_hint: 'Utilise le GPU pour la vidéo et l\'affichage. Désactivée : environ 50 Mo de RAM en moins, mais plus de CPU.',
+    saver: 'Économie de mémoire', saver_hint: 'Un peu moins de RAM (0 à 20 Mo mesurés). Les pages peuvent être un peu plus lentes.',
+    playback: 'Lecture', playback_lead: 'Vitesse, minuterie et pause automatique.', speed: 'Vitesse', pitch: 'Conserver la tonalité',
+    pitch_hint: 'Désactivé : son « slowed » ou « nightcore » quand la vitesse change.',
+    sleep: 'Minuterie de mise en veille', sleep_off: 'Désactivée', sleep_end: 'Fin du morceau', sleep_until: 'Pause à {t}', sleep_track: 'Pause à la fin de ce morceau',
+    resume: 'Reprendre le dernier morceau au démarrage', resume_hint: 'Il s\'ouvre en pause, à la même position.',
+    pause_lock: 'Pause au verrouillage de Windows', pause_device: 'Pause quand le casque est débranché',
+    pause_device_hint: 'Quand une sortie audio disparaît.',
+    ads_note: 'Les pubs sont toujours lues à vitesse normale.',
+    equalizer: 'Égaliseur', eq_lead: 'Dix bandes de 31 Hz à 16 kHz, ±12 dB.', preamp: 'Préampli',
+    eq_note: 'Baisse le préampli quand plusieurs bandes sont montées, pour éviter la saturation.',
+    e_flat: 'Plat', e_bass: 'Basses', e_rock: 'Rock', e_pop: 'Pop', e_vocal: 'Voix', e_classical: 'Classique', e_electronic: 'Électro',
+    sound: 'Son et effets', sound_lead: 'Effets et sortie appliqués à la musique.',
+    reverb: 'Réverbération', bass: 'Renforcement des basses', normalize: 'Normaliser le volume', normalize_hint: 'Équilibre les morceaux forts et faibles.',
+    spatial: 'Son 8D', spatial_hint: 'Le son tourne lentement autour de toi. Idéal au casque.',
+    balance: 'Balance', mono: 'Mono', mono_hint: 'Le même son dans les deux oreilles.',
+    limiter: 'Limiteur de volume', limiter_hint: 'Plafonne les pics juste sous le niveau maximal.',
+    fx_hint: 'La vitesse des pubs n\'est jamais modifiée. Les effets consomment un peu de CPU quand ils sont actifs.',
+    shortcuts: 'Raccourcis', shortcuts_lead: 'Raccourcis globaux, actifs même quand l\'app est en arrière-plan.',
+    shortcuts_note: 'Clique un champ puis appuie sur les touches. Au moins Ctrl, Alt, Maj ou Win. Retour arrière efface.',
+    hk_play_pause: 'Lecture / Pause', hk_next: 'Morceau suivant', hk_previous: 'Morceau précédent', hk_volume_up: 'Volume +', hk_volume_down: 'Volume −',
+    hk_like: 'J’aime', hk_dislike: 'Je n’aime pas', hk_mute: 'Couper / rétablir le son', hk_shuffle: 'Lecture aléatoire', hk_repeat: 'Répéter', hk_show_hide: 'Afficher / masquer la fenêtre',
+    my_presets: 'Mes préréglages', my_presets_hint: 'Enregistre les bandes et le préampli actuels sous un nom.', preset_name: 'Nom du préréglage',
+    save: 'Enregistrer', delete: 'Supprimer', preset_limit: 'Jusqu’à 24 préréglages. Supprimes-en un d’abord.',
+    backup: 'Sauvegarde des réglages', backup_hint: 'Exporte dans le dossier Téléchargements, ou importe un fichier enregistré. La position de la fenêtre et le dernier morceau ne sont pas inclus.',
+    export: 'Exporter', import: 'Importer', exported: 'Enregistré sous youtube-music-settings.json dans Téléchargements.', imported: 'Réglages importés.',
+    import_failed: 'Ce fichier n’est pas un fichier de réglages valide.',
+    hk_none: 'Aucun', hk_press: 'Appuie sur les touches…', hk_need_mod: 'Ajoute Ctrl, Alt, Maj ou Win.', hk_taken: 'Déjà utilisé par une autre app.',
+    discord_lead: 'Affiche le morceau en cours sur ton profil Discord (Stable, PTB et Canary).',
+    discord: 'Afficher mon écoute', discord_hint: 'L\'application Discord doit être ouverte. Se reconnecte après un changement de compte.',
+    advanced: 'Avancé', advanced_lead: 'Intégrations pour le streaming.',
+    obs: 'Widget OBS', obs_hint: 'Affiche le morceau en cours dans OBS avec une source Navigateur. Accessible depuis ce PC uniquement.',
+    obs_port: 'Port', obs_port_hint: 'De 1024 à 65535.', obs_url: 'URL de la source Navigateur',
+    obs_failed: 'Le port {p} est indisponible, sans doute pris par une autre app. Choisis un autre port.',
+    copy: 'Copier', copied: 'Copié', open: 'Ouvrir',
+    obs_note: 'Dans OBS : Sources, +, Navigateur. Colle l’URL, largeur 500, hauteur 120. Le fond est transparent. La carte se masque pendant les pubs et quand rien ne joue.',
+    about: 'Infos', about_lead: 'Version et liens du projet.', about_tag: 'Application de bureau pour YouTube Music, construite avec Tauri et WebView2.',
+    report: 'Signaler un problème', no_repo: 'La page du projet n\'est pas encore publiée.', version: 'Version', license: 'Licence',
+    about_note: 'Non affilié à YouTube ni à Google.',
+    restart_msg: 'Redémarrez pour appliquer les changements de performances et de langue.', restart_now: 'Redémarrer',
+    p_off: 'Aucun', p_slowed: 'Slowed', p_slowed_reverb: 'Slowed + reverb', p_nightcore: 'Nightcore',
+    p_bass_boost: 'Basses', p_concert_hall: 'Salle de concert',
+  },
+};
+const PRESETS = ['off', 'slowed', 'slowed_reverb', 'nightcore', 'bass_boost', 'concert_hall'];
+const EQ_PRESETS = ['flat', 'bass', 'rock', 'pop', 'vocal', 'classical', 'electronic'];
+const HOTKEYS = ['play_pause', 'next', 'previous', 'volume_up', 'volume_down', 'like', 'dislike', 'mute', 'shuffle', 'repeat', 'show_hide'];
+const MAX_EQ_PRESETS = 24;
+const invoke = window.__TAURI_INTERNALS__.invoke;
+let settings = null;
+let info = null;
+let tr = T.en;
+let refused = [];
+let obsPort = null;
+
+const get = (path) => path.split('.').reduce((o, k) => o[k], settings);
+const set = (path, v) => {
+  const keys = path.split('.');
+  const last = keys.pop();
+  keys.reduce((o, k) => o[k], settings)[last] = v;
+};
+const sign = (v) => (v > 0 ? '+' : '') + v;
+const fmt = {
+  'audio.speed': (v) => `${Number(v).toFixed(2)}×`,
+  'audio.reverb': (v) => `${Math.round(v * 100)} %`,
+  'audio.bass_db': (v) => `+${v} dB`,
+  'audio.balance': (v) => (Math.abs(v) < 0.01 ? 'C' : `${v < 0 ? 'L' : 'R'} ${Math.round(Math.abs(v) * 100)}`),
+};
+
+// Slides the nav highlight onto the selected category (no animation on first show or resize).
+function movePill(animate) {
+  const btn = document.querySelector('nav button[aria-current=true]');
+  const pill = document.querySelector('.nav-pill');
+  if (!btn) return;
+  pill.classList.toggle('instant', !animate);
+  pill.style.width = `${btn.offsetWidth}px`;
+  pill.style.height = `${btn.offsetHeight}px`;
+  pill.style.transform = `translate(${btn.offsetLeft}px, ${btn.offsetTop}px)`;
+}
+function showPage(id, animate = true) {
+  document.querySelectorAll('.page').forEach((p) => { p.hidden = p.id !== id; });
+  document.querySelectorAll('nav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.page === id)));
+  document.querySelector('main').scrollTop = 0;
+  movePill(animate);
+}
+window.addEventListener('resize', () => movePill(false));
+
+function translate() {
+  const lang = settings.language === 'system' ? navigator.language.slice(0, 2) : settings.language;
+  tr = T[lang] || T.en;
+  document.documentElement.lang = T[lang] ? lang : 'en';
+  document.querySelectorAll('[data-t]').forEach((el) => { el.textContent = tr[el.dataset.t] ?? el.textContent; });
+  document.querySelectorAll('#presets .chip').forEach((c) => { c.textContent = tr['p_' + c.dataset.preset]; });
+  document.querySelectorAll('#eq-presets .chip').forEach((c) => { c.textContent = tr['e_' + c.dataset.preset]; });
+  document.querySelectorAll('[data-hk-label]').forEach((el) => { el.textContent = tr['hk_' + el.dataset.hkLabel]; });
+  const pre = document.querySelector('.band.pre .hz');
+  if (pre) pre.textContent = tr.preamp;
+  const sys = document.querySelector('#language option[value=system]');
+  if (sys) sys.textContent = tr.system;
+  document.getElementById('preset-name').placeholder = tr.preset_name;
+}
+
+function render() {
+  document.querySelectorAll('[data-key]').forEach((el) => {
+    const v = get(el.dataset.key);
+    if (el.type === 'checkbox') el.checked = v; else el.value = v;
+  });
+  document.querySelectorAll('output').forEach((o) => { o.textContent = fmt[o.dataset.for](get(o.dataset.for)); });
+  const hiddenRow = document.getElementById('row-hidden');
+  hiddenRow.classList.toggle('disabled', !settings.launch_at_startup);
+  hiddenRow.querySelector('input').disabled = !settings.launch_at_startup;
+  // Equalizer
+  document.querySelectorAll('.band').forEach((band) => {
+    const i = band.dataset.band;
+    const v = i === 'pre' ? settings.audio.preamp_db : settings.audio.eq[Number(i)];
+    band.querySelector('input').value = v;
+    band.querySelector('.db').textContent = `${sign(Math.round(v))} dB`;
+  });
+  // OBS widget
+  const obsOn = settings.obs_widget;
+  for (const id of ['row-obs-port', 'row-obs-url']) document.getElementById(id).classList.toggle('disabled', !obsOn);
+  document.querySelector('[data-key=obs_port]').disabled = !obsOn;
+  const obsUrl = obsPort ? `http://127.0.0.1:${obsPort}/` : '';
+  document.getElementById('obs-url').textContent = obsUrl || '—';
+  document.getElementById('obs-copy').disabled = !obsUrl;
+  document.getElementById('obs-open').disabled = !obsUrl;
+  const obsErr = document.getElementById('obs-error');
+  obsErr.hidden = !obsOn || !!obsPort;
+  obsErr.textContent = tr.obs_failed.replace('{p}', settings.obs_port);
+  renderMyPresets();
+  // Hotkeys
+  document.querySelectorAll('.hotkey').forEach((input) => {
+    if (document.activeElement === input) return;
+    input.value = settings.hotkeys[input.dataset.hk] || tr.hk_none;
+  });
+  document.querySelectorAll('[data-hk-error]').forEach((el) => {
+    const taken = refused.includes(settings.hotkeys[el.dataset.hkError]);
+    el.hidden = !taken;
+    el.textContent = tr.hk_taken;
+  });
+}
+
+function applyUpdate(res) {
+  settings = res.settings;
+  refused = res.hotkeys_refused || [];
+  obsPort = res.obs_port;
+  document.getElementById('restart').classList.toggle('show', res.restart_needed);
+  render();
+}
+
+let timer = null;
+function commit(delay) {
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    try {
+      applyUpdate(await invoke('update_settings', { settings }));
+    } catch (e) { console.error(e); }
+  }, delay);
+}
+
+function bindInputs() {
+  document.querySelectorAll('[data-key]').forEach((el) => {
+    el.addEventListener(el.type === 'range' ? 'input' : 'change', () => {
+      const v = el.type === 'checkbox' ? el.checked
+        : el.type === 'range' ? Number(el.value)
+        // Ports must fit a u16: clamp, and an empty field falls back to the minimum.
+        : el.type === 'number' ? Math.min(Number(el.max), Math.max(Number(el.min), Math.round(Number(el.value)) || 0))
+        : el.value;
+      set(el.dataset.key, v);
+      if (el.dataset.key === 'language') translate();
+      if (el.dataset.key.startsWith('audio.')) {
+        document.querySelectorAll('#presets .chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+      }
+      render();
+      commit(el.type === 'range' ? 120 : 0);
+    });
+  });
+}
+
+function buildPresets() {
+  const chips = document.getElementById('presets');
+  for (const name of PRESETS) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.dataset.preset = name;
+    b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', async () => {
+      const p = await invoke('audio_preset', { name });
+      // Effect presets change only speed, pitch, reverb and bass.
+      Object.assign(settings.audio, { speed: p.speed, preserve_pitch: p.preserve_pitch, reverb: p.reverb, bass_db: p.bass_db });
+      chips.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', String(c === b)));
+      render();
+      commit(0);
+    });
+    chips.appendChild(b);
+  }
+  const eqChips = document.getElementById('eq-presets');
+  for (const name of EQ_PRESETS) {
+    const b = document.createElement('button');
+    b.className = 'chip';
+    b.dataset.preset = name;
+    b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', async () => {
+      settings.audio.eq = await invoke('eq_preset', { name });
+      eqChips.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', String(c === b)));
+      render();
+      commit(0);
+    });
+    eqChips.appendChild(b);
+  }
+}
+
+// User equalizer presets (stored in settings.eq_presets, sanitized by the app).
+const DEL_ICON = 'M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z';
+function renderMyPresets() {
+  const box = document.getElementById('my-presets');
+  box.replaceChildren(...settings.eq_presets.map((p, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip mine';
+    const apply = document.createElement('button');
+    apply.className = 'chip-name';
+    apply.textContent = p.name;
+    apply.addEventListener('click', () => {
+      settings.audio.eq = [...p.eq];
+      settings.audio.preamp_db = p.preamp_db;
+      document.querySelectorAll('#eq-presets .chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+      render();
+      commit(0);
+    });
+    const del = document.createElement('button');
+    del.className = 'chip-del';
+    del.setAttribute('aria-label', `${tr.delete} ${p.name}`);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', DEL_ICON);
+    svg.append(path);
+    del.append(svg);
+    del.addEventListener('click', () => { settings.eq_presets.splice(i, 1); render(); commit(0); });
+    chip.append(apply, del);
+    return chip;
+  }));
+}
+function savePreset() {
+  const input = document.getElementById('preset-name');
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  const preset = { name, eq: [...settings.audio.eq], preamp_db: settings.audio.preamp_db };
+  const same = settings.eq_presets.findIndex((p) => p.name.toLowerCase() === name.toLowerCase());
+  const hint = document.getElementById('my-presets-hint');
+  if (same >= 0) settings.eq_presets[same] = preset;
+  else if (settings.eq_presets.length >= MAX_EQ_PRESETS) { hint.textContent = tr.preset_limit; return; }
+  else settings.eq_presets.push(preset);
+  hint.textContent = tr.my_presets_hint;
+  input.value = '';
+  render();
+  commit(0);
+}
+document.getElementById('preset-save').addEventListener('click', savePreset);
+document.getElementById('preset-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') savePreset(); });
+
+// Settings backup: export downloads a JSON file; import merges a file onto the
+// current settings and goes through update_settings (sanitized by the app).
+const backupStatus = (text) => { document.getElementById('backup-status').textContent = text; };
+document.getElementById('export').addEventListener('click', () => {
+  const { window: _w, last_track: _t, ...data } = settings;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'youtube-music-settings.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  backupStatus(tr.exported);
+});
+document.getElementById('import').addEventListener('click', () => document.getElementById('import-file').click());
+document.getElementById('import-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    if (file.size > 64 * 1024) throw new Error('file too large');
+    const data = JSON.parse(await file.text());
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('not an object');
+    const merged = { ...settings, ...data,
+      audio: { ...settings.audio, ...(data.audio || {}) },
+      hotkeys: { ...settings.hotkeys, ...(data.hotkeys || {}) } };
+    applyUpdate(await invoke('update_settings', { settings: merged }));
+    translate();
+    render();
+    backupStatus(tr.imported);
+  } catch (err) {
+    console.error(err);
+    backupStatus(tr.import_failed);
+  }
+});
+
+function buildEqualizer(bands) {
+  const eq = document.getElementById('eq');
+  const label = (hz) => (hz >= 1000 ? `${hz / 1000}k` : String(hz));
+  const make = (key, text) => {
+    const band = document.createElement('div');
+    band.className = 'band' + (key === 'pre' ? ' pre' : '');
+    band.dataset.band = key;
+    const db = document.createElement('div');
+    db.className = 'db';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = -12; input.max = 12; input.step = 1;
+    input.setAttribute('aria-label', text);
+    const hz = document.createElement('div');
+    hz.className = 'hz';
+    hz.textContent = text;
+    input.addEventListener('input', () => {
+      const v = Number(input.value);
+      if (key === 'pre') settings.audio.preamp_db = v;
+      else settings.audio.eq[Number(key)] = v;
+      document.querySelectorAll('#eq-presets .chip').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+      render();
+      commit(120);
+    });
+    band.append(db, input, hz);
+    eq.appendChild(band);
+  };
+  make('pre', 'Pre');
+  bands.forEach((hz, i) => make(String(i), label(hz)));
+}
+
+// Global shortcuts: the field captures a key combination.
+const CODE_NAMES = { ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'Up', ArrowDown: 'Down', Space: 'Space',
+  PageUp: 'PageUp', PageDown: 'PageDown', Home: 'Home', End: 'End', Insert: 'Insert', Delete: 'Delete' };
+function keyName(code) {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
+  return CODE_NAMES[code] || null;
+}
+function buildHotkeys() {
+  const card = document.getElementById('hotkeys');
+  for (const action of HOTKEYS) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const text = document.createElement('div');
+    text.className = 'text';
+    const lbl = document.createElement('div');
+    lbl.className = 'label';
+    lbl.dataset.hkLabel = action;
+    const err = document.createElement('div');
+    err.className = 'error';
+    err.dataset.hkError = action;
+    err.hidden = true;
+    text.append(lbl, err);
+    const input = document.createElement('input');
+    input.className = 'hotkey';
+    input.readOnly = true;
+    input.dataset.hk = action;
+    input.setAttribute('aria-label', action);
+    input.addEventListener('focus', () => { input.value = tr.hk_press; });
+    input.addEventListener('blur', render);
+    input.addEventListener('keydown', (e) => {
+      e.preventDefault();
+      if (e.key === 'Tab') return;
+      const mods = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Win'].filter(Boolean);
+      if (!mods.length && (e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Escape')) {
+        settings.hotkeys[action] = '';
+        input.blur();
+        commit(0);
+        return;
+      }
+      const key = keyName(e.code);
+      if (!key) return; // modifier alone: wait for the key
+      if (!mods.length) { input.value = tr.hk_need_mod; return; }
+      settings.hotkeys[action] = [...mods, key].join('+');
+      input.blur();
+      commit(0);
+    });
+    const clear = document.createElement('button');
+    clear.className = 'icon-btn';
+    clear.setAttribute('aria-label', 'Clear');
+    clear.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg>';
+    clear.addEventListener('click', () => { settings.hotkeys[action] = ''; commit(0); });
+    row.append(text, input, clear);
+    card.appendChild(row);
+  }
+}
+
+// Sleep timer (not a saved setting: it is cleared on restart).
+function renderSleep(s) {
+  document.getElementById('sleep').value = s.mode;
+  const status = document.getElementById('sleep-status');
+  if (s.mode === 'end') status.textContent = tr.sleep_track;
+  else if (s.until_ms) status.textContent = tr.sleep_until.replace('{t}', new Date(s.until_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  else status.textContent = '';
+}
+document.getElementById('sleep').addEventListener('change', async (e) => {
+  renderSleep(await invoke('set_sleep_timer', { mode: e.target.value }));
+});
+
+const closeOptions = () => invoke('window_control', { action: 'close_options' });
+document.getElementById('back').addEventListener('click', closeOptions);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !document.activeElement.classList.contains('hotkey')) closeOptions();
+});
+document.querySelectorAll('[data-win]').forEach((b) =>
+  b.addEventListener('click', () => invoke('window_control', { action: b.dataset.win })));
+document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.page)));
+document.getElementById('restart-btn').addEventListener('click', () => invoke('restart_app'));
+document.getElementById('github').addEventListener('click', () => info.repo_url && invoke('open_url', { url: info.repo_url }));
+const obsUrl = () => `http://127.0.0.1:${obsPort}/`;
+document.getElementById('obs-open').addEventListener('click', () => obsPort && invoke('open_url', { url: obsUrl() }));
+document.getElementById('obs-copy').addEventListener('click', async (e) => {
+  try {
+    await navigator.clipboard.writeText(obsUrl());
+    e.currentTarget.textContent = tr.copied;
+    setTimeout(() => { document.getElementById('obs-copy').textContent = tr.copy; }, 1500);
+  } catch (err) { console.error(err); }
+});
+document.getElementById('issues').addEventListener('click', () => info.repo_url && invoke('open_url', { url: info.repo_url + '/issues' }));
+
+(async () => {
+  info = await invoke('get_settings');
+  settings = info.settings;
+  obsPort = info.obs_port;
+  const sel = document.getElementById('language');
+  for (const [code, name] of info.languages) {
+    const o = document.createElement('option');
+    o.value = code;
+    o.textContent = name;
+    sel.appendChild(o);
+  }
+  buildPresets();
+  buildEqualizer(info.eq_bands);
+  buildHotkeys();
+  bindInputs();
+  document.getElementById('version').textContent = info.version;
+  document.getElementById('webview').textContent = info.webview_version || '—';
+  const hasRepo = !!info.repo_url;
+  document.getElementById('github').disabled = !hasRepo;
+  document.getElementById('issues').disabled = !hasRepo;
+  document.getElementById('no-repo').hidden = hasRepo;
+  translate();
+  render();
+  renderSleep(await invoke('get_sleep_timer'));
+  showPage('general', false);
+  document.getElementById('restart').classList.toggle('show', info.restart_needed);
+})();
+</script>
+</body>
+</html>

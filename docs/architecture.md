@@ -1,0 +1,119 @@
+# Architecture
+
+Windows 11 YouTube Music player. Priorities used to justify every decision:
+(1) stability, (2) YouTube Music compatibility, (3) low resource use,
+(4) maintainability, (5) user experience.
+
+**Decision (2026-11-06): the MVP builds on `apps/baseline` (Tauri 2 + WebView2).** The GPUI
+hybrid cost +60 MB private memory and +225 MB commit, has an intermittent shutdown bug, and
+rendered nothing the page does not already show (see `prototype-report.md`). `apps/hybrid` stays
+as a frozen experiment, to revisit once tauri-plugin-gpui is validated on Windows. Native extras
+(tray, shortcuts, mini-player, settings) go through Tauri.
+
+## Layout
+
+```
+crates/ytm-core/   UI-independent: PlayerState, bridge message validation, Command -> JS, start URL. Unit tested.
+apps/hybrid/       Tauri 2 + tauri-plugin-gpui: GPUI-rendered window hosting one child WebView2 (webview_frame).
+apps/baseline/     Tauri 2 + one WebView2 window. Benchmark reference and fallback.
+assets/bridge.js   Script injected into music.youtube.com (shared by both apps).
+tools/bench.ps1    Process-tree RAM/CPU/GPU sampler (works on YTMDesktop too).
+tools/bench-suite.ps1  Idle / playing / minimized runs for both prototypes (+ YTMDesktop idle).
+docs/              This file + prototype report with measurements.
+```
+
+## Components
+
+| Layer | Owner | Role |
+|---|---|---|
+| Application core | Tauri 2 (TAO event loop) | Lifecycle, windows, commands, logging (`tauri-plugin-log`, local only) |
+| Native UI | GPUI via `tauri-plugin-gpui` | Window renderer (wgpu, Vulkan on this machine); demand-driven redraw. Currently only lays out the webview |
+| Music runtime | WebView2 (one instance) | Official music.youtube.com: session, playback, controls, library, navigation |
+| Integration | `ytm-core` + `bridge.js` | Page -> Rust state events (for tray / mini-player / shortcuts later) |
+
+No native player bar: YouTube Music already shows its own player bar; a second
+one duplicated it (removed after review). Native surfaces are reserved for what
+the page cannot provide: title bar, tray, mini-player, settings.
+
+## Data flow (event-driven, no polling)
+
+```
+music.youtube.com  --bridge.js: <video> events + MediaSession metadata setter-->  invoke('player_event', json)
+                                                                                      |
+                                       ytm-core::parse_bridge_msg (size cap, schema, sanitize)
+                                                                                      |
+                                       stored in the app, logged on change (no redraw: nothing renders it yet)
+
+Future native controls -> ytm_core::Command::to_js() -> run_on_main_thread -> webview.eval(js)
+(tested in the prototype with a GPUI bar: play/pause, next, volume worked).
+```
+
+Decisions:
+
+- **Tauri 2.12.5, not 3.0-alpha** — stability (1).
+- **One WebView2, created once, never recreated** — memory (3) and session stability (1). Its
+  user data folder is Tauri's default under `%LOCALAPPDATA%\dev.ytm-desktop.<variant>`, so the
+  Google session persists.
+- **Remote IPC limited to one command.** `build.rs` declares an app manifest so `player_event`
+  becomes the permission `allow-player-event`; `capabilities/remote.json` grants only that to
+  `https://music.youtube.com/*`. The payload is treated as untrusted (length cap, typed schema,
+  control characters stripped, volume range) — security, (1).
+- **State comes from the Media Session metadata** the page already publishes to Windows (the same
+  data the Windows media flyout shows) and the `<video>` element events. No DOM scraping for
+  read-only data; dedup in JS and in Rust avoids redundant IPC — (2), (3).
+- **Media keys / Windows media flyout need no code**: WebView2 registers the page's Media Session
+  with Windows SMTC (verified: session `msedgewebview2.exe`, title/artist, next/prev enabled).
+- **Commands use DOM/player selectors, isolated in `Command::to_js`.** These are the fragile part
+  when YouTube changes its markup; only one function needs updating — (4).
+- **Tauri calls are deferred out of GPUI updates** with `run_on_main_thread` (plugin rule) — (1).
+- **Frameless main window** (Windows 11 rounded corners, border in the page color): the page
+  itself is the title bar, so YouTube Music's background gradient reaches the top edge (a native
+  caption only takes a solid color). `assets/titlebar.js` adds the caption buttons in a shadow
+  root (DOM APIs only: YouTube enforces Trusted Types) and marks `ytmusic-nav-bar` as the drag
+  region. The remote capability gains `start-dragging`, `internal-toggle-maximize` and the
+  `window_control` command (minimize / toggle maximize / close), nothing else.
+- **Options inside the main window**: the main window is a `tauri::Window` with child webviews
+  (`ytm` = music.youtube.com, `options` = local page laid over it while open, destroyed on close).
+  The local page keeps its own capability; music.youtube.com gets no settings access.
+- **Tray + close-to-tray** (default on), **lazy mini-player** (a small local page, created on
+  demand and destroyed on close), **settings** in `%APPDATA%dev.ytm-desktop.baselinesettings.json`.
+- **WebView2 robustness** (`apps/baseline/src/win.rs`): renderer crash or hang -> page reload
+  (verified: renderer killed, reloaded in about 1 s); browser process exit -> app restart. While
+  hidden in the tray, WebView2 memory target is set to low (measured: private WS 335 -> 309 MB).
+- **`YTM_START_URL`** (accepted only under `https://music.youtube.com/`) makes benchmarks play the
+  same content in both variants.
+- **Logs**: `max_file_size` 2 MB, keep 2 files (plugin default is 40 KB and discards history).
+- **No ad blocking, no Premium/DRM circumvention, no user-agent spoofing for Google sign-in.**
+- **No Node.js at build or run time.** `cargo build` only.
+
+## Build and run
+
+```
+cargo test -p ytm-core
+cargo build --release -p baseline -p hybrid
+target\release\hybrid.exe        # or baseline.exe
+$env:YTM_LOG="debug"             # optional log level (default info)
+```
+
+Logs: `%LOCALAPPDATA%\dev.ytm-desktop.<variant>\logs\`.
+
+Benchmark: `tools\bench-suite.ps1` (results in `bench\`), see `docs/prototype-report.md`.
+
+## Memory (measured 2026-11-06, `tools/mem-breakdown.ps1`, `tools/mem-final.ps1`)
+
+Private working set of the whole tree, signed in, one run per case (page content varies, about ±10 MB):
+
+| Configuration | Idle | Playing |
+|---|---|---|
+| Default (service worker blocked by `assets/lean.js`) | 282 MB | 287 MB |
+| Options > Memory saver (`--js-flags=--lite-mode --renderer-process-limit=1`) | 287 MB | 266 MB |
+| Memory saver + hardware acceleration off | 230 MB | 207 MB |
+
+- The YouTube Music page renderer is the largest part (about 160–230 MB) and is out of the app's control.
+- Hardware acceleration is off by default since 2026-11-06: about -50 MB (GPU process 64 -> 15 MB). The playing CPU was
+  measured with the window in the background, so it does not show the cost of software video decoding.
+- Disabling extra Edge features (`SpareRendererForSitePerProcess`, `BackForwardCache`, `Translate`, ...)
+  gave no measurable gain and was dropped.
+- Hidden or minimized: WebView2 memory target set to low (about -26 MB measured when hidden).
+- WebView2 vs Servo: Servo was not adopted. YouTube Music needs Media Source Extensions,
+  Google sign-in and Windows media integration, which WebView2 provides today.

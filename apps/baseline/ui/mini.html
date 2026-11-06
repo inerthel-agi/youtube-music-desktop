@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>Mini player</title>
+<style>
+  :root { color-scheme: dark; --bg: #030303; --fg: #f1f1f1; --muted: #aaaaaa; --hover: #272727; --track: #3a3a3a; --accent: #ff0033;
+          --ease: cubic-bezier(.2, .8, .2, 1); }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+    font: 13px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; user-select: none; }
+  body { display: flex; gap: 12px; padding: 10px; }
+  .art { width: 92px; height: 92px; border-radius: 6px; background: #181818 center / cover no-repeat; flex: none; }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; }
+  .top { display: flex; align-items: flex-start; gap: 4px; }
+  .info { flex: 1; min-width: 0; }
+  .title, .artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title { font-weight: 600; font-size: 14px; }
+  .artist { color: var(--muted); font-size: 12px; margin-top: 1px; }
+  /* Progress: a tall invisible hit area around a thin bar; click to seek. */
+  .seek { padding: 6px 0; cursor: pointer; }
+  .progress { height: 3px; border-radius: 2px; background: var(--track); overflow: hidden; transition: height .12s var(--ease); }
+  .seek:hover .progress { height: 5px; }
+  .progress > div { height: 100%; width: 0; background: var(--fg); }
+  .seek:hover .progress > div { background: var(--accent); }
+  .controls { display: flex; align-items: center; gap: 2px; }
+  .sep { width: 6px; flex: none; }
+  button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: none; color: var(--fg);
+    display: grid; place-items: center; cursor: default; flex: none;
+    transition: background-color .15s var(--ease), transform .12s var(--ease), color .15s var(--ease); }
+  button:hover { background: var(--hover); }
+  button:active { transform: scale(.9); }
+  button:focus-visible { outline: 2px solid var(--fg); }
+  svg { width: 18px; height: 18px; fill: currentColor; }
+  .alt { color: var(--muted); }
+  .alt:hover { color: var(--fg); }
+  .alt svg { width: 16px; height: 16px; }
+  .alt.on { color: var(--fg); }
+  .small { width: 24px; height: 24px; }
+  .small svg { width: 13px; height: 13px; }
+  .volume { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--muted); }
+  .volume svg { width: 16px; height: 16px; }
+  input[type=range] { width: 76px; accent-color: var(--fg); }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+</style>
+</head>
+<body data-tauri-drag-region>
+  <div class="art" id="art" data-tauri-drag-region></div>
+  <div class="main" data-tauri-drag-region>
+    <div class="top" data-tauri-drag-region>
+      <div class="info" data-tauri-drag-region>
+        <div class="title" id="title" data-tauri-drag-region>YouTube Music</div>
+        <div class="artist" id="artist" data-tauri-drag-region></div>
+      </div>
+      <button class="small" data-cmd="show_main" aria-label="Open main window"><svg viewBox="0 0 24 24"><path d="M14 3v2h3.6l-9.8 9.8 1.4 1.4L19 6.4V10h2V3zM19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2z"/></svg></button>
+      <button class="small" data-cmd="close_mini" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+    </div>
+    <div class="seek" id="seek" aria-label="Seek"><div class="progress"><div id="bar"></div></div></div>
+    <div class="controls">
+      <button class="alt" data-cmd="shuffle" aria-label="Shuffle"><svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg></button>
+      <button data-cmd="previous" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+      <button data-cmd="play_pause" aria-label="Play/Pause"><svg viewBox="0 0 24 24"><path id="play-icon" d="M8 5v14l11-7z"/></svg></button>
+      <button data-cmd="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+      <button class="alt" data-cmd="repeat" aria-label="Repeat"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg></button>
+      <span class="sep"></span>
+      <button class="alt" id="like" data-cmd="like" aria-label="Like" aria-pressed="false"><svg viewBox="0 0 24 24"><path id="like-icon"/></svg></button>
+      <button class="alt" id="dislike" data-cmd="dislike" aria-label="Dislike" aria-pressed="false"><svg viewBox="0 0 24 24"><path id="dislike-icon"/></svg></button>
+      <div class="volume">
+        <svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.47 4.47 0 0 0 2.5-4z"/></svg>
+        <input type="range" id="volume" min="0" max="100" step="1" aria-label="Volume">
+      </div>
+    </div>
+  </div>
+<script>
+  const PLAY = 'M8 5v14l11-7z', PAUSE = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
+  const LIKE = { off: 'M9 21h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.58 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2zM9 9l4.34-4.34L12 10h9v2l-3 7H9V9zM1 9h4v12H1z',
+                 on: 'M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z' };
+  const DISLIKE = { off: 'M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm0 12-4.34 4.34L12 14H3v-2l3-7h9v10zm4-12h4v12h-4z',
+                    on: 'M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z' };
+  const $ = (id) => document.getElementById(id);
+  const invoke = window.__TAURI_INTERNALS__.invoke;
+  let dragging = false;
+  let state = { duration: 0 };
+  const setRating = (like) => {
+    for (const [id, icons, on] of [['like', LIKE, like === 'like'], ['dislike', DISLIKE, like === 'dislike']]) {
+      $(id + '-icon').setAttribute('d', on ? icons.on : icons.off);
+      $(id).classList.toggle('on', on);
+      $(id).setAttribute('aria-pressed', String(on));
+    }
+  };
+  // Called by the app (webview.eval) with the player state. Text via textContent only;
+  // the artwork URL was validated by the app (Google image hosts).
+  window.render = (s) => {
+    state = s;
+    const track = !s.ad && s.title;
+    $('title').textContent = track ? s.title : 'YouTube Music';
+    $('artist').textContent = track ? [s.artist, s.album].filter(Boolean).join(' • ') : (s.ad ? 'Ad' : '');
+    $('play-icon').setAttribute('d', s.playing ? PAUSE : PLAY);
+    $('art').style.backgroundImage = track && s.artwork ? `url("${encodeURI(s.artwork)}")` : 'none';
+    setRating(track ? s.like : 'indifferent');
+    if (!dragging) $('volume').value = s.volume;
+    // Progress: one CSS transition per state change, run by the compositor (no timer).
+    const bar = $('bar');
+    const pct = s.duration > 0 ? Math.min(100, (s.position / s.duration) * 100) : 0;
+    bar.style.transition = 'none';
+    bar.style.width = `${pct}%`;
+    if (s.playing && s.duration > s.position) {
+      bar.getBoundingClientRect(); // commit the start position
+      bar.style.transition = `width ${s.duration - s.position}s linear`;
+      bar.style.width = '100%';
+    }
+  };
+  setRating('indifferent');
+  document.querySelectorAll('button').forEach((b) =>
+    b.addEventListener('click', () => invoke('mini_command', { cmd: b.dataset.cmd })));
+  $('seek').addEventListener('click', (e) => {
+    if (!(state.duration > 0) || state.ad) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const t = Math.round(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * state.duration);
+    invoke('mini_command', { cmd: 'seek', value: t });
+  });
+  const vol = $('volume');
+  vol.addEventListener('pointerdown', () => { dragging = true; });
+  vol.addEventListener('change', () => { dragging = false; });
+  vol.addEventListener('input', () => invoke('mini_command', { cmd: 'volume', value: Number(vol.value) }));
+  invoke('mini_command', { cmd: 'ready' });
+</script>
+</body>
+</html>

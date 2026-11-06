@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ytm-hybrid",
+  "version": "0.1.0",
+  "identifier": "dev.ytm-desktop.hybrid",
+  "app": { "windows": [], "security": { "csp": null } },
+  "bundle": { "active": false, "icon": ["icons/icon.ico"] }
+}

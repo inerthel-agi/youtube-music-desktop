@@ -1,0 +1,48 @@
+[package]
+name = "baseline"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+ytm-core.workspace = true
+tauri = { workspace = true, features = ["tray-icon"] }
+tauri-plugin-log.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Same versions Tauri already uses (no new crates): title bar styling and
+# WebView2 APIs Tauri does not expose (process failure, memory target).
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = { version = "0.62", features = [
+    "Data_Xml_Dom",
+    "Foundation",
+    "Media",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+    "UI_Notifications",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
