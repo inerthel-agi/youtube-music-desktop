@@ -70,7 +70,10 @@ Decisions:
   itself is the title bar, so YouTube Music's background gradient reaches the top edge (a native
   caption only takes a solid color). `assets/titlebar.js` adds the caption buttons in a shadow
   root (DOM APIs only: YouTube enforces Trusted Types) and marks `ytmusic-nav-bar` as the drag
-  region. The remote capability gains `start-dragging`, `internal-toggle-maximize` and the
+  region. It also puts Back / Forward / Home in the bar's `.left-content`, after the logo:
+  `history.back()` / `history.forward()` (YTM navigates with `pushState`), enabled from the
+  Navigation API (`navigation.canGoBack`), and Home clicks the logo link (in-page navigation,
+  playback continues). Below 936 px YTM narrows that part to 148 px, so the logo is hidden. The remote capability gains `start-dragging`, `internal-toggle-maximize` and the
   `window_control` command (minimize / toggle maximize / close), nothing else.
 - **Options inside the main window**: the main window is a `tauri::Window` with child webviews
   (`ytm` = music.youtube.com, `options` = local page laid over it while open, destroyed on close).

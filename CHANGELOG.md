@@ -2,6 +2,14 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] - 2026-11-07
+
+### Added
+
+- Back, Forward and Home buttons in the top bar, after the YouTube Music logo. Back and Forward
+  are dimmed when there is no page to go to. Home keeps the music playing. Below 936 px of width
+  (compact mode) they take the place of the logo.
+
 ## [0.1.2] - 2026-11-06
 
 ### Fixed
@@ -54,6 +62,7 @@ First release.
 - Settings export and import.
 - Per-user NSIS installer and portable zip.
 
+[0.1.3]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/inerthel-agi/youtube-music-desktop/releases/tag/v0.1.0

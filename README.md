@@ -45,6 +45,8 @@ target\release\youtube-music.exe
   `%LOCALAPPDATA%\dev.ytm-desktop.baseline\EBWebView`.
 - Drag the window by the YouTube Music top bar. Double-click it to maximize.
 - The minimize, maximize and close buttons are at the top right.
+- Back, Forward and Home buttons follow the YouTube Music logo. Below 936 px of width they
+  replace the logo.
 - Closing the window hides it in the notification area. Left-click the tray icon to show or
   hide it again.
 - The tray menu has Play / Pause, Next, Previous, Mini player, Compact mode, Options, Close to tray and Quit.
@@ -139,7 +141,7 @@ and the Google session survive updates. `apps\hybrid` is a frozen GPUI experimen
 - Google sign-in works in WebView2 as of 2026-11-06. Google can change this at any time.
 - Next and Previous click elements of the YouTube Music page. They stop working if YouTube
   changes its markup. The selectors are in `Command::to_js` (`crates\ytm-core\src\lib.rs`).
-- The drag region and the caption buttons depend on the `ytmusic-nav-bar` element of the page.
+- The drag region, the caption buttons and the Back / Forward / Home buttons depend on the `ytmusic-nav-bar` element of the page.
   If YouTube renames it, the window can no longer be dragged. The buttons still work.
 - During ads, the page reports the ad as the current track. The tray tooltip and the mini
   player show the app name instead.
