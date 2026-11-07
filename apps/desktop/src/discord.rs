@@ -28,7 +28,9 @@ use windows::Win32::{
     Security::{EqualSid, GetTokenInformation, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser},
     System::{
         Pipes::{GetNamedPipeServerProcessId, PeekNamedPipe},
-        Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION},
+        Threading::{
+            GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        },
     },
 };
 use ytm_core::discord::{
@@ -38,6 +40,8 @@ use ytm_core::discord::{
 /// The playing track; `None` clears the activity.
 pub type Track = Option<Activity>;
 
+// A few messages per track change: boxing would only add an allocation.
+#[allow(clippy::large_enum_variant)]
 enum Msg {
     Update(Track),
     Stop,
@@ -90,6 +94,7 @@ const OP_CLOSE: u32 = 2;
 const OP_PING: u32 = 3;
 const OP_PONG: u32 = 4;
 
+#[allow(clippy::large_enum_variant)]
 enum Event {
     Msg(Msg),
     Tick,
@@ -261,7 +266,10 @@ fn connect(index: u8) -> io::Result<File> {
         .ok()
         .is_some_and(|v| v.get("evt").and_then(|e| e.as_str()) == Some("READY"));
     if !ready {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "no READY from the pipe server"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "no READY from the pipe server",
+        ));
     }
     Ok(pipe)
 }
@@ -275,7 +283,8 @@ fn server_is_same_user(pipe: &File) -> bool {
         return false;
     }
     // SAFETY: query-only access; the handle is closed right after use.
-    let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else {
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+    else {
         return false;
     };
     let theirs = token_user(process);
@@ -301,7 +310,15 @@ fn token_user(process: HANDLE) -> Option<Vec<u64>> {
     let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut len) };
     let mut buf = vec![0u64; (len as usize).div_ceil(8)];
     // SAFETY: `buf` holds at least `len` bytes and is 8-byte aligned.
-    let res = unsafe { GetTokenInformation(token, TokenUser, Some(buf.as_mut_ptr().cast()), len, &mut len) };
+    let res = unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr().cast()),
+            len,
+            &mut len,
+        )
+    };
     // SAFETY: token handle opened above, closed once.
     let _ = unsafe { CloseHandle(token) };
     res.ok().map(|()| buf)
@@ -324,7 +341,11 @@ fn check(c: &mut Conn) -> bool {
     }
     match read_frame(&mut c.pipe) {
         Ok((OP_CLOSE, body)) => {
-            log::warn!("Discord closed pipe {}: {}", c.index, String::from_utf8_lossy(&body));
+            log::warn!(
+                "Discord closed pipe {}: {}",
+                c.index,
+                String::from_utf8_lossy(&body)
+            );
             false
         }
         Ok((OP_PING, body)) => {
@@ -462,10 +483,23 @@ mod tests {
         let name = format!(r"\\.\pipe\ytm-test-{}", std::process::id());
         // SAFETY: plain pipe creation; the handle is closed at the end of the test.
         let server = unsafe {
-            CreateNamedPipeW(&HSTRING::from(name.as_str()), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE, 1, 512, 512, 0, None)
+            CreateNamedPipeW(
+                &HSTRING::from(name.as_str()),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE,
+                1,
+                512,
+                512,
+                0,
+                None,
+            )
         };
         assert!(!server.is_invalid());
-        let client = OpenOptions::new().read(true).write(true).open(&name).unwrap();
+        let client = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&name)
+            .unwrap();
         assert!(server_is_same_user(&client));
         drop(client);
         // SAFETY: handle created above.
@@ -538,7 +572,10 @@ mod tests {
             b.record(t0);
         }
         assert_eq!(b.earliest(t0), t0 + WINDOW);
-        assert_eq!(b.earliest(t0 + WINDOW + Duration::from_secs(1)), t0 + WINDOW + Duration::from_secs(1));
+        assert_eq!(
+            b.earliest(t0 + WINDOW + Duration::from_secs(1)),
+            t0 + WINDOW + Duration::from_secs(1)
+        );
     }
 
     #[test]
@@ -553,7 +590,10 @@ mod tests {
             }
         });
         let t = Instant::now();
-        assert!(matches!(next_settled(&rx, Instant::now(), None), Event::Msg(Msg::Update(Some(_)))));
+        assert!(matches!(
+            next_settled(&rx, Instant::now(), None),
+            Event::Msg(Msg::Update(Some(_)))
+        ));
         assert!(t.elapsed() < MAX_SETTLE + Duration::from_millis(500));
         drop(rx);
         let _ = feeder.join();

@@ -34,6 +34,13 @@ No confirmed vulnerability. Three leads could not be proven without a sandbox an
 | `sanitize` kept bidi controls | Embeddings, overrides and isolates (U+202A–202E, U+2066–2069) are dropped; LRM/RLM and zero-width joiners stay (real titles, emoji) | `strips_bidi_overrides_but_keeps_joiners` |
 | Known CVEs in `Cargo.lock` | OSV.dev query of the 737 crates.io packages: 9 advisories (unsoundness in `glib`, unmaintained `paste`, `proc-macro-error`, `ttf-parser`, `rustybuzz`, `zvariant`, `zbus_names`). None is in the Windows build of `youtube-music` (`cargo tree -i`): Linux-only or `apps/hybrid` | rerun before a release |
 
+## Review, 2026-11-07 (after 0.1.4)
+
+| Item | Result | Check |
+|---|---|---|
+| Pages, commands and capabilities | Each `invoke` of `bridge.js`, `titlebar.js`, `options.html`, `mini.html` is registered, in the app manifest and granted by that page's capability; `remote.json` stays `ytm` + `https://music.youtube.com/*` + 4 permissions | `pages_invoke_only_registered_commands_their_capability_grants`, `page_actions_are_handled` |
+| Known advisories | OSV.dev, 228 crates.io packages of `cargo tree -p youtube-music --target x86_64-pc-windows-msvc`: none. Workspace, all targets (692): the same Linux-only / `apps/hybrid` set as above | rerun before a release |
+
 ## Kept as is
 
 - `msSmartScreenProtection` stays disabled (Tauri's default arguments, kept by `browser_args`).
@@ -46,3 +53,10 @@ No confirmed vulnerability. Three leads could not be proven without a sandbox an
 
 - New windows (`target=_blank`, `window.open`) from the music page are refused silently (wry default);
   links to other sites do not open in the browser.
+- `navigation_allowed` accepts every `*.google.com` host, including ones that serve user content
+  (`sites.google.com`, `script.google.com`, `docs.google.com/forms`). A page there would show in
+  the app window without an address bar (no IPC: the remote capability is music.youtube.com only).
+  Narrowing the list needs a sign-in test with a real Google account (2-step, consent, account
+  switch) first.
+- Local pages (`options.html`, `mini.html`) have no CSP (`"csp": null`); they render remote data
+  with `textContent` only.

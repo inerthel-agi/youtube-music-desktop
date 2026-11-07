@@ -2,6 +2,22 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- When Windows shut down or signed out with the window open, the app did not save its settings:
+  "resume the last track" reopened an older track and the window position was lost. They are
+  now saved on every exit.
+- A settings file that could not be read was replaced by the defaults at the next save, losing
+  presets and shortcuts. It is now kept as `settings.json.corrupt`, and settings are flushed to
+  disk before they replace the old file.
+
+### Changed
+
+- Windows CI: format, Clippy without warnings, tests, page script syntax and the Web Audio
+  routing check (`tools/audiofx-check.html` in headless Chrome).
+
 ## [0.1.4] - 2026-11-07
 
 ### Fixed

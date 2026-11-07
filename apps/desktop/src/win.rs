@@ -501,7 +501,9 @@ pub fn ensure_start_menu_shortcut() -> Result<(), String> {
     let lnk = std::path::Path::new(&appdata)
         .join(r"Microsoft\Windows\Start Menu\Programs\YouTube Music.lnk");
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    if lnk.exists() && shortcut_target(&lnk).is_some_and(|t| t.eq_ignore_ascii_case(exe.as_os_str())) {
+    if lnk.exists()
+        && shortcut_target(&lnk).is_some_and(|t| t.eq_ignore_ascii_case(exe.as_os_str()))
+    {
         return Ok(());
     }
     let exe = HSTRING::from(exe.as_os_str());
@@ -533,8 +535,11 @@ fn shortcut_target(lnk: &std::path::Path) -> Option<std::ffi::OsString> {
     unsafe {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
         let file: IPersistFile = link.cast().ok()?;
-        file.Load(&HSTRING::from(lnk.as_os_str()), windows::Win32::System::Com::STGM_READ)
-            .ok()?;
+        file.Load(
+            &HSTRING::from(lnk.as_os_str()),
+            windows::Win32::System::Com::STGM_READ,
+        )
+        .ok()?;
         let mut buf = [0u16; 1024];
         link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
         let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());

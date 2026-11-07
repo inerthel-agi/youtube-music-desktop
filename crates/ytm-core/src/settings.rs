@@ -1,6 +1,10 @@
 //! User settings, stored as JSON in the app config directory.
 
-use std::{fs, io, path::Path};
+use std::{
+    fs,
+    io::{self, Write},
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -216,29 +220,42 @@ impl Settings {
     }
 
     /// Missing file -> defaults. Unreadable/corrupt file -> defaults plus the error,
-    /// so the caller can log it; the app must still start.
+    /// so the caller can log it; the app must still start. A corrupt file is kept
+    /// as `settings.json.corrupt`: the next save would otherwise overwrite the
+    /// user's presets and shortcuts with the defaults.
     pub fn load(path: &Path) -> (Self, Option<String>) {
         match fs::read_to_string(path) {
             // A file saved by Notepad or PowerShell can start with a UTF-8 BOM.
             Ok(s) => match serde_json::from_str::<Self>(s.trim_start_matches('\u{feff}')) {
                 Ok(v) => (v.sanitized(), None),
-                Err(e) => (Self::default(), Some(format!("corrupt settings: {e}"))),
+                Err(e) => {
+                    let kept = path.with_extension("json.corrupt");
+                    let note = match fs::rename(path, &kept) {
+                        Ok(()) => format!("kept as {}", kept.display()),
+                        Err(e) => format!("not kept: {e}"),
+                    };
+                    (
+                        Self::default(),
+                        Some(format!("corrupt settings ({note}): {e}")),
+                    )
+                }
             },
             Err(e) if e.kind() == io::ErrorKind::NotFound => (Self::default(), None),
             Err(e) => (Self::default(), Some(format!("cannot read settings: {e}"))),
         }
     }
 
-    /// Writes to a temp file then renames, so a crash never leaves a half file.
+    /// Writes to a temp file, flushes it to disk, then renames, so neither a crash
+    /// nor a power cut leaves a half or empty file in place of the settings.
     pub fn save(&self, path: &Path) -> io::Result<()> {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
         let tmp = path.with_extension("json.tmp");
-        fs::write(
-            &tmp,
-            serde_json::to_vec_pretty(self).map_err(io::Error::other)?,
-        )?;
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(&serde_json::to_vec_pretty(self).map_err(io::Error::other)?)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&tmp, path)
     }
 }
@@ -367,7 +384,13 @@ mod tests {
         let (s, err) = Settings::load(&path);
         assert_eq!(s, Settings::default());
         assert!(err.unwrap().starts_with("corrupt settings"));
+        // The user's file survives the save of the defaults that follows.
+        s.save(&path).unwrap();
+        let kept = path.with_extension("json.corrupt");
+        assert_eq!(fs::read_to_string(&kept).unwrap(), "{not json");
+        assert_eq!(Settings::load(&path), (Settings::default(), None));
         fs::remove_file(&path).unwrap();
+        fs::remove_file(&kept).unwrap();
     }
 
     #[test]
