@@ -41,7 +41,10 @@ impl Feed {
             }
         }
         // Compact JSON has no newline, so it fits on one `data:` line.
-        format!("data: {}\n\n", serde_json::to_string(&s).unwrap_or_default())
+        format!(
+            "data: {}\n\n",
+            serde_json::to_string(&s).unwrap_or_default()
+        )
     }
 }
 
@@ -188,7 +191,12 @@ fn handle(mut c: TcpStream, port: u16, feed: &Mutex<Feed>) -> io::Result<()> {
             }) {
                 Ok(f) if f.clients.len() + f.writing < MAX_CLIENTS => f.event(),
                 Ok(_) => {
-                    return respond(&mut c, "503 Service Unavailable", "text/plain", "too many widgets");
+                    return respond(
+                        &mut c,
+                        "503 Service Unavailable",
+                        "text/plain",
+                        "too many widgets",
+                    );
                 }
                 Err(_) => return Ok(()),
             };

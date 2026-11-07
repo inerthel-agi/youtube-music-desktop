@@ -1,0 +1,42 @@
+# Windows checks for the shipped app (apps/desktop) and its core. apps/hybrid is a
+# frozen experiment and is not built here.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --locked -p ytm-core -p youtube-music --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked -p ytm-core -p youtube-music
+      - name: Page scripts parse
+        shell: bash
+        run: for f in assets/*.js; do node --check "$f"; done
+      - name: Web Audio routing (tools/audiofx-check.html)
+        shell: bash
+        run: |
+          out=$("/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --disable-gpu \
+            --user-data-dir="$RUNNER_TEMP/chrome" --allow-file-access-from-files \
+            --virtual-time-budget=10000 --dump-dom "file:///$(pwd -W)/tools/audiofx-check.html")
+          # Only the rendered <pre id="out">: the dumped page also holds the script's
+          # own 'ALL PASS' literal.
+          result=$(echo "$out" | sed -n '/<pre id="out">/,/<\/pre>/p')
+          echo "$result"
+          echo "$result" | head -1 | grep -q '<pre id="out">ALL PASS'

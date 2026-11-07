@@ -216,7 +216,10 @@ async fn mini_command(app: AppHandle, cmd: String, value: Option<u32>) -> Result
         "play_pause" => send(&app, Command::PlayPause),
         "next" => send(&app, Command::Next),
         "previous" => send(&app, Command::Previous),
-        "volume" => send(&app, Command::SetVolume(value.unwrap_or(100).min(100) as u8)),
+        "volume" => send(
+            &app,
+            Command::SetVolume(value.unwrap_or(100).min(100) as u8),
+        ),
         "seek" => send(&app, Command::Seek(value.unwrap_or(0))),
         "like" => send(&app, Command::Like),
         "dislike" => send(&app, Command::Dislike),
@@ -614,7 +617,11 @@ fn build_main(
         .on_navigation(|url| {
             let ok = ytm_core::navigation_allowed(url.scheme(), url.host_str().unwrap_or(""));
             if !ok {
-                log::warn!("navigation blocked: {}://{}", url.scheme(), url.host_str().unwrap_or(""));
+                log::warn!(
+                    "navigation blocked: {}://{}",
+                    url.scheme(),
+                    url.host_str().unwrap_or("")
+                );
             }
             ok
         })
@@ -798,8 +805,12 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build tauri app");
 
-    app.run(|_, event| {
+    app.run(|app, event| {
         if let RunEvent::Exit = event {
+            // Also reached when Windows shuts down or signs out (tao exits the
+            // process right after): keep the last track and window bounds.
+            remember_bounds(app);
+            save_settings(app);
             log::info!("exit after {} ms", ms());
         }
     });
@@ -824,6 +835,108 @@ mod tests {
         // Playback and DRM-protected content must keep working.
         for k in [K::Autoplay, K::MediaKeySystemAccess, K::Other] {
             assert_eq!(music_permission(k), R::Default, "{k}");
+        }
+    }
+
+    /// Quoted words following `marker` in `src` (`invoke('x'`, `data-cmd="x"`).
+    fn quoted_after<'a>(src: &'a str, marker: &str) -> Vec<&'a str> {
+        src.split(marker)
+            .skip(1)
+            .filter_map(|s| s.split(['\'', '"']).next())
+            .collect()
+    }
+
+    fn permissions(capability: &str) -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(capability).unwrap();
+        v["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// Every command a page invokes is registered, declared in the app manifest
+    /// and granted by that page's capability; music.youtube.com gets nothing more
+    /// than its two commands. A renamed command fails here, not silently at run time.
+    #[test]
+    fn pages_invoke_only_registered_commands_their_capability_grants() {
+        let main = include_str!("main.rs");
+        let handlers = main.split("generate_handler![").nth(1).unwrap();
+        let handlers = handlers.split(']').next().unwrap();
+        let manifest = include_str!("../build.rs");
+        let remote = include_str!("../capabilities/remote.json");
+        let pages = [
+            (include_str!("../../../assets/bridge.js"), remote),
+            (include_str!("../../../assets/titlebar.js"), remote),
+            (
+                include_str!("../ui/options.html"),
+                include_str!("../capabilities/options.json"),
+            ),
+            (
+                include_str!("../ui/mini.html"),
+                include_str!("../capabilities/mini.json"),
+            ),
+        ];
+        for (src, capability) in pages {
+            let granted = permissions(capability);
+            let invoked = quoted_after(src, "invoke('");
+            assert!(!invoked.is_empty());
+            for cmd in invoked {
+                assert!(handlers.contains(cmd), "{cmd} is not in generate_handler!");
+                assert!(
+                    manifest.contains(&format!("\"{cmd}\"")),
+                    "{cmd} is not in build.rs"
+                );
+                let perm = format!("allow-{}", cmd.replace('_', "-"));
+                assert!(
+                    granted.contains(&perm),
+                    "{perm} missing from the capability"
+                );
+            }
+        }
+        let v: serde_json::Value = serde_json::from_str(remote).unwrap();
+        assert_eq!(
+            v["remote"]["urls"],
+            serde_json::json!(["https://music.youtube.com/*"])
+        );
+        assert_eq!(v["webviews"], serde_json::json!(["ytm"]));
+        let mut remote = permissions(remote);
+        remote.sort();
+        assert_eq!(
+            remote,
+            [
+                "allow-player-event",
+                "allow-window-control",
+                "core:window:allow-internal-toggle-maximize",
+                "core:window:allow-start-dragging",
+            ]
+        );
+    }
+
+    /// Actions and mini-player commands sent by the pages have a match arm.
+    #[test]
+    fn page_actions_are_handled() {
+        let main = include_str!("main.rs");
+        let titlebar = include_str!("../../../assets/titlebar.js");
+        let buttons = titlebar.split("const BUTTONS = [").nth(1).unwrap();
+        let buttons = buttons.split("];").next().unwrap();
+        let options = include_str!("../ui/options.html");
+        let mut actions = quoted_after(buttons, "['");
+        actions.extend(quoted_after(options, "data-win=\""));
+        actions.extend(quoted_after(options, "action: '"));
+        let mini = include_str!("../ui/mini.html");
+        let mut cmds = quoted_after(mini, "data-cmd=\"");
+        cmds.extend(quoted_after(mini, "cmd: '"));
+        assert!(
+            actions.len() >= 5 && cmds.len() >= 10,
+            "{actions:?} {cmds:?}"
+        );
+        for name in actions.into_iter().chain(cmds) {
+            assert!(
+                main.contains(&format!("\"{name}\" =>")),
+                "{name} has no match arm"
+            );
         }
     }
 }
