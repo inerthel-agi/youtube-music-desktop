@@ -35,5 +35,8 @@ jobs:
           out=$("/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --disable-gpu \
             --user-data-dir="$RUNNER_TEMP/chrome" --allow-file-access-from-files \
             --virtual-time-budget=10000 --dump-dom "file:///$(pwd -W)/tools/audiofx-check.html")
-          echo "$out" | grep -E '^(PASS|FAIL|ALL PASS|FAILED)'
-          echo "$out" | grep -q 'ALL PASS'
+          # Only the rendered <pre id="out">: the dumped page also holds the script's
+          # own 'ALL PASS' literal.
+          result=$(echo "$out" | sed -n '/<pre id="out">/,/<\/pre>/p')
+          echo "$result"
+          echo "$result" | head -1 | grep -q '<pre id="out">ALL PASS'
