@@ -2,6 +2,30 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.4] - 2026-11-07
+
+### Fixed
+
+- With the YouTube Music side menu collapsed, the Back, Forward and Home buttons covered the
+  search box. The top bar now makes room for them.
+- After repeated WebView2 crashes the app reloaded the page or restarted without end. It now
+  reloads at most 3 times in 5 minutes and restarts at most 3 times in 10 minutes, then shows a
+  notification.
+- A restart (Options, or after a WebView2 crash) could close the app instead of reopening it.
+  The new process now waits for the old one to exit.
+- A Discord client that stopped answering could block Rich Presence for good. The app now gives
+  up after 5 seconds and reconnects later.
+
+### Changed
+
+- The YouTube Music page can no longer ask for the microphone, camera, location, notifications,
+  clipboard reading and similar permissions, and cannot download files. Playback and Google
+  sign-in are not affected.
+- Text direction control characters are removed from track titles shown in the tray,
+  notifications, Discord and the OBS widget.
+- Sound effects use less CPU: reverb runs only while it is on, and with every effect back to
+  neutral the sound skips the effect chain.
+
 ## [0.1.3] - 2026-11-07
 
 ### Added
