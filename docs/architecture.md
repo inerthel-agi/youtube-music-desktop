@@ -73,7 +73,7 @@ Decisions:
   region. It also puts Back / Forward / Home in the bar's `.left-content`, after the logo:
   `history.back()` / `history.forward()` (YTM navigates with `pushState`), enabled from the
   Navigation API (`navigation.canGoBack`), and Home clicks the logo link (in-page navigation,
-  playback continues). Below 936 px YTM narrows that part to 148 px, so the logo is hidden. The remote capability gains `start-dragging`, `internal-toggle-maximize` and the
+  playback continues). YTM gives that part a fixed width (148 px with its side menu collapsed or below 936 px), so the app lets it grow to fit the buttons (`min-width: max-content`) and hides the logo below 936 px. The remote capability gains `start-dragging`, `internal-toggle-maximize` and the
   `window_control` command (minimize / toggle maximize / close), nothing else.
 - **Options inside the main window**: the main window is a `tauri::Window` with child webviews
   (`ytm` = music.youtube.com, `options` = local page laid over it while open, destroyed on close).
@@ -81,7 +81,10 @@ Decisions:
 - **Tray + close-to-tray** (default on), **lazy mini-player** (a small local page, created on
   demand and destroyed on close), **settings** in `%APPDATA%\dev.ytm-desktop.baseline\settings.json`.
 - **WebView2 robustness** (`apps/desktop/src/win.rs`): renderer crash or hang -> page reload
-  (verified: renderer killed, reloaded in about 1 s); browser process exit -> app restart. While
+  (verified: renderer killed, reloaded in about 1 s); browser process exit -> app restart. Both are
+  rate limited (`ytm_core::Retries`): 3 reloads per 5 min, 3 crash restarts per 10 min (history
+  passed to the new process in `YTM_RESTARTS`), then a notification instead of a loop. A restarted
+  process waits up to 5 s for the old one to release the single-instance mutex. While
   hidden in the tray, WebView2 memory target is set to low (measured: private WS 335 -> 309 MB).
 - **`YTM_START_URL`** (accepted only under `https://music.youtube.com/`) makes benchmarks play the
   same content in both variants.
@@ -121,5 +124,9 @@ Private working set of the whole tree, signed in, one run per case (page content
 - Disabling extra Edge features (`SpareRendererForSitePerProcess`, `BackForwardCache`, `Translate`, ...)
   gave no measurable gain and was dropped.
 - Hidden or minimized: WebView2 memory target set to low (about -26 MB measured when hidden).
+- Audio effects (`assets/audiofx.js`): the reverb convolver is created and connected only while reverb
+  is on, and with every effect back to neutral the source bypasses the chain. Offline render of 60 s
+  of stereo audio (Edge 156, `tools/audiofx-check.html` checks the routing): EQ chain 0.53 % of one
+  core, plus an idle convolver 1.37 %, bypass 0.04 %.
 - WebView2 vs Servo: Servo was not adopted. YouTube Music needs Media Source Extensions,
   Google sign-in and Windows media integration, which WebView2 provides today.

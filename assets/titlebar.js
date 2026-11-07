@@ -71,10 +71,13 @@
     document.documentElement.appendChild(host);
 
     // Keep YTM's own top-right controls (avatar, menu) clear of the caption buttons.
-    // Below 936 px YTM narrows its left part to 148 px: the logo gives its place
-    // to the back / forward / home buttons (home does what the logo link does).
+    // YTM gives its left part a fixed width (148 px with the side menu collapsed):
+    // let it grow to fit the back / forward / home buttons instead of covering the
+    // search box. Below 936 px the logo gives them its place (home does what the
+    // logo link does).
     const pad = document.createElement('style');
     pad.textContent = `ytmusic-nav-bar .right-content{margin-right:${BUTTON_W * BUTTONS.length - 16}px!important}
+      ytmusic-nav-bar .left-content{min-width:max-content!important}
       @media (max-width:935px){ytmusic-nav-bar ytmusic-logo{display:none!important}.ytm-nav{margin-left:0!important}}`;
     document.head.appendChild(pad);
   };
@@ -93,7 +96,7 @@
     const left = bar.querySelector('.left-content');
     navHost = document.createElement('div');
     navHost.className = 'ytm-nav';
-    navHost.style.cssText = 'display:flex;align-items:center;flex:none;margin-left:4px';
+    navHost.style.cssText = 'display:flex;align-items:center;flex:none;margin:0 8px 0 4px';
     const root = navHost.attachShadow({ mode: 'closed' });
     shadowStyle(root, `
       button{width:32px;height:32px;border:0;padding:0;border-radius:50%;background:transparent;
