@@ -2,7 +2,7 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.5] - 2026-11-07
 
 ### Fixed
 
@@ -110,6 +110,8 @@ First release.
 - Settings export and import.
 - Per-user NSIS installer and portable zip.
 
+[0.1.5]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.0...v0.1.1
