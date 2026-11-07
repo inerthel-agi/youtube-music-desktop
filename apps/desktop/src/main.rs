@@ -37,6 +37,80 @@ pub(crate) const BG: tauri::webview::Color = tauri::webview::Color(3, 3, 3, 255)
 
 static START: OnceLock<Instant> = OnceLock::new();
 
+/// Set on the process the app restarts itself into: times of the restarts that
+/// followed a WebView2 crash (`ytm_core::Retries::encode`, may be empty). Its
+/// presence also tells the new process to wait for the old one to exit.
+const RESTART_ENV: &str = "YTM_RESTARTS";
+/// Crash restarts allowed within the window, then the app quits instead of looping.
+const CRASH_RESTARTS: (usize, u64) = (3, 600);
+static RESTART_HISTORY: OnceLock<String> = OnceLock::new();
+
+pub(crate) fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Restarts the app. After a crash the restart counts against `CRASH_RESTARTS`;
+/// past it the app shows a notification and quits rather than loop.
+pub(crate) fn restart(app: &AppHandle, after_crash: bool) {
+    let (max, window) = CRASH_RESTARTS;
+    let mut history = ytm_core::Retries::decode(
+        RESTART_HISTORY.get().map_or("", String::as_str),
+        max,
+        window,
+    );
+    if after_crash && !history.allow(unix_secs()) {
+        log::error!("WebView2 crashed {max} times in {window} s; quitting instead of restarting");
+        #[cfg(windows)]
+        {
+            let (title, body) = if french_ui(app) {
+                (
+                    "YouTube Music s'est arrêté",
+                    "WebView2 plante à répétition. Relancez l'application ou réparez Microsoft Edge WebView2.",
+                )
+            } else {
+                (
+                    "YouTube Music stopped",
+                    "WebView2 keeps crashing. Start the app again or repair Microsoft Edge WebView2.",
+                )
+            };
+            let _ = win::notify(title, body);
+        }
+        return quit(app);
+    }
+    save_settings(app);
+    // SAFETY: on Windows `set_var` is safe from any thread (std docs). The child
+    // inherits the variable; `main` reads and removes it.
+    unsafe { std::env::set_var(RESTART_ENV, history.encode()) };
+    app.restart();
+}
+
+/// Browser permissions of the music page. YouTube Music plays and Google signs
+/// in without any of the denied ones; others (autoplay, DRM key systems) keep
+/// WebView2's default.
+fn music_permission(kind: tauri::webview::PermissionKind) -> tauri::webview::PermissionResponse {
+    use tauri::webview::{PermissionKind as K, PermissionResponse as R};
+    match kind {
+        K::Microphone
+        | K::Camera
+        | K::Geolocation
+        | K::Notifications
+        | K::ClipboardRead
+        | K::DisplayCapture
+        | K::Midi
+        | K::Sensors
+        | K::LocalFonts
+        | K::WindowManagement
+        | K::AutomaticDownloads
+        | K::FileSystemAccess => {
+            log::info!("permission {kind} denied to the music page");
+            R::Deny
+        }
+        _ => R::Default,
+    }
+}
+
 fn ms() -> u128 {
     START.get().map_or(0, |s| s.elapsed().as_millis())
 }
@@ -544,6 +618,16 @@ fn build_main(
             }
             ok
         })
+        .on_permission_request(|_, kind| music_permission(kind))
+        // No file downloads from the music page: YouTube Music offers none, and
+        // with SmartScreen off (Tauri default) nothing would vet them.
+        .on_download(|_, e| match e {
+            tauri::webview::DownloadEvent::Requested { url, .. } => {
+                log::warn!("download blocked ({})", url.host_str().unwrap_or(""));
+                false
+            }
+            _ => true,
+        })
         .on_page_load(|w, p| {
             if p.event() == PageLoadEvent::Finished {
                 // Host only: full URLs would put the listening history in the log.
@@ -590,13 +674,23 @@ fn log_level() -> log::LevelFilter {
 
 fn main() {
     START.get_or_init(Instant::now);
+    let restarted = std::env::var(RESTART_ENV).ok();
+    // SAFETY: no other thread exists yet. Removed so processes the app starts
+    // (browser for links) do not inherit it.
+    unsafe { std::env::remove_var(RESTART_ENV) };
     #[cfg(windows)]
     {
         // A second launch brings back the running window instead of opening another one.
-        if win::another_instance_running(std::env::args().any(|a| a == AUTOSTART_FLAG)) {
+        if win::another_instance_running(
+            std::env::args().any(|a| a == AUTOSTART_FLAG),
+            restarted.is_some(),
+        ) {
             return;
         }
         win::set_app_id(); // before any window: taskbar and media session identity
+    }
+    if let Some(h) = restarted {
+        let _ = RESTART_HISTORY.set(h);
     }
     let app = tauri::Builder::default()
         .plugin(
@@ -709,4 +803,27 @@ fn main() {
             log::info!("exit after {} ms", ms());
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::music_permission;
+    use tauri::webview::{PermissionKind as K, PermissionResponse as R};
+
+    #[test]
+    fn music_page_gets_no_device_or_prompt_permissions_but_keeps_playback() {
+        for k in [
+            K::Microphone,
+            K::Camera,
+            K::Geolocation,
+            K::Notifications,
+            K::ClipboardRead,
+        ] {
+            assert_eq!(music_permission(k), R::Deny, "{k}");
+        }
+        // Playback and DRM-protected content must keep working.
+        for k in [K::Autoplay, K::MediaKeySystemAccess, K::Other] {
+            assert_eq!(music_permission(k), R::Default, "{k}");
+        }
+    }
 }

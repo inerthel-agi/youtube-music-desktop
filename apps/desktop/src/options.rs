@@ -129,8 +129,7 @@ pub fn open_url(app: AppHandle, url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
-    crate::save_settings(&app);
-    app.restart();
+    crate::restart(&app, false);
 }
 
 pub fn open(app: &AppHandle) {

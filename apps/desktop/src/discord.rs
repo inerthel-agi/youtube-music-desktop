@@ -386,14 +386,49 @@ fn send(pipe: &mut File, payload: &serde_json::Value) -> io::Result<()> {
     }
 }
 
+/// Longest wait for a Discord answer: a client that hangs with its pipe open
+/// must not block the worker (and leak it when presence is turned off) for ever.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn read_frame(pipe: &mut File) -> io::Result<(u32, Vec<u8>)> {
+    read_frame_by(pipe, Instant::now() + REPLY_TIMEOUT)
+}
+
+fn read_frame_by(pipe: &mut File, deadline: Instant) -> io::Result<(u32, Vec<u8>)> {
     let mut header = [0u8; 8];
-    pipe.read_exact(&mut header)?;
+    read_by(pipe, &mut header, deadline)?;
     let (op, len) = decode_header(header)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "oversized Discord frame"))?;
     let mut body = vec![0u8; len as usize];
-    pipe.read_exact(&mut body)?;
+    read_by(pipe, &mut body, deadline)?;
     Ok((op, body))
+}
+
+/// `read_exact` with a deadline. Synchronous pipe reads have no timeout, so it
+/// reads only what `PeekNamedPipe` says is waiting and polls in between.
+fn read_by(pipe: &mut File, buf: &mut [u8], deadline: Instant) -> io::Result<()> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        let Some(n) = available(pipe) else {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Discord pipe closed",
+            ));
+        };
+        if n == 0 {
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "no answer from Discord",
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        let end = buf.len().min(filled + n as usize);
+        filled += pipe.read(&mut buf[filled..end])?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -435,6 +470,63 @@ mod tests {
         drop(client);
         // SAFETY: handle created above.
         let _ = unsafe { CloseHandle(server) };
+    }
+
+    #[test]
+    fn reads_stop_at_the_deadline_when_discord_hangs() {
+        use std::os::windows::io::FromRawHandle;
+        use windows::Win32::{
+            Storage::FileSystem::PIPE_ACCESS_DUPLEX,
+            System::Pipes::{CreateNamedPipeW, PIPE_TYPE_BYTE},
+        };
+        use windows::core::HSTRING;
+        let name = format!(r"\\.\pipe\ytm-test-hang-{}", std::process::id());
+        // SAFETY: plain pipe creation; ownership moves to `server` below.
+        let handle = unsafe {
+            CreateNamedPipeW(
+                &HSTRING::from(name.as_str()),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE,
+                1,
+                512,
+                512,
+                0,
+                None,
+            )
+        };
+        assert!(!handle.is_invalid());
+        // SAFETY: valid handle created above, owned (and closed) by this File only.
+        let mut server = unsafe { File::from_raw_handle(handle.0) };
+        let mut client = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&name)
+            .unwrap();
+
+        // A frame split in two writes is reassembled.
+        let frame = encode(OP_FRAME, &serde_json::json!({ "evt": "READY" }));
+        server.write_all(&frame[..5]).unwrap();
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            server.write_all(&frame[5..]).unwrap();
+            server
+        });
+        let (op, body) =
+            read_frame_by(&mut client, Instant::now() + Duration::from_secs(5)).unwrap();
+        assert_eq!(op, OP_FRAME);
+        assert!(body.ends_with(br#""READY"}"#));
+        let server = writer.join().unwrap();
+
+        // Nothing more comes: the read gives up at the deadline.
+        let t = Instant::now();
+        let err = read_frame_by(&mut client, t + Duration::from_millis(200)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(t.elapsed() < Duration::from_secs(2));
+
+        // The server closing ends a waiting read at once.
+        drop(server);
+        let err = read_frame_by(&mut client, Instant::now() + Duration::from_secs(5)).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     }
 
     #[test]

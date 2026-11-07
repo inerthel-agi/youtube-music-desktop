@@ -50,8 +50,6 @@
     const bass = ctx.createBiquadFilter();
     bass.type = 'lowshelf';
     bass.frequency.value = 120;
-    const conv = ctx.createConvolver();
-    conv.buffer = impulse(ctx);
     const dry = ctx.createGain();
     const wet = ctx.createGain();
     const mix = ctx.createGain();
@@ -80,9 +78,10 @@
     for (const b of eq) node = node.connect(b);
     node.connect(bass);
     bass.connect(dry).connect(mix);
-    bass.connect(conv).connect(wet).connect(mix);
+    wet.connect(mix);
     mix.connect(mono).connect(pan);
-    g = { ctx, pre, eq, bass, dry, wet, mono, pan, depth, comp, limit, tail: null, lfoOn: false };
+    g = { ctx, src, pre, eq, bass, dry, wet, conv: null, verb: false, mono, pan, depth, comp, limit,
+      tail: null, lfoOn: false, on: true };
   };
 
   // Output tail: pan -> [compressor] -> [limiter] -> destination; rewired only on change.
@@ -113,10 +112,33 @@
     applyRate();
     if (!g && !needsGraph(cfg)) return;
     if (!g) build(video);
+    const on = needsGraph(cfg);
+    // The source cannot leave the context once captured: with every effect back
+    // to neutral it goes straight to the output and the chain idles.
+    if (on !== g.on) {
+      g.src.disconnect();
+      g.src.connect(on ? g.pre : g.ctx.destination);
+      g.on = on;
+    }
+    if (g.ctx.state === 'suspended') g.ctx.resume().catch(() => {});
+    if (!on) return;
     g.pre.gain.value = db(cfg.preamp_db);
     g.eq.forEach((b, i) => { b.gain.value = cfg.eq[i] || 0; });
     g.bass.gain.value = cfg.bass_db;
     g.wet.gain.value = cfg.reverb;
+    // The convolver (2.5 s impulse) costs CPU on every sample even at zero mix:
+    // created on first use, connected only while reverb is on.
+    const verb = cfg.reverb > 0;
+    if (verb !== g.verb) {
+      if (verb && !g.conv) {
+        g.conv = g.ctx.createConvolver();
+        g.conv.buffer = impulse(g.ctx);
+        g.conv.connect(g.wet);
+      }
+      if (verb) g.bass.connect(g.conv);
+      else g.bass.disconnect(g.conv);
+      g.verb = verb;
+    }
     g.dry.gain.value = 1 - cfg.reverb * 0.4;
     // Mono: force one channel through this node, then upmix to stereo again.
     g.mono.channelCount = cfg.mono ? 1 : 2;
@@ -128,7 +150,6 @@
       g.lfoOn = cfg.spatial;
     }
     wireTail(cfg.normalize, cfg.limiter);
-    if (g.ctx.state === 'suspended') g.ctx.resume();
   };
 
   const attach = (v) => {

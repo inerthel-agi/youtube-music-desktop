@@ -176,13 +176,74 @@ fn is_artwork_url(url: &str) -> bool {
         && ARTWORK_HOSTS.iter().any(|h| host.ends_with(h))
 }
 
+/// Bidi embeddings, overrides and isolates: a title holding one can reverse the
+/// text after it in the tray tooltip, notifications and Discord. Marks (LRM/RLM)
+/// and zero-width joiners stay: real titles and emoji sequences need them.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
 fn sanitize(s: &str) -> String {
     s.chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !is_bidi_control(*c))
         .take(MAX_TEXT_CHARS)
         .collect::<String>()
         .trim()
         .to_owned()
+}
+
+/// Automatic recovery attempts (page reload, app restart after a WebView2
+/// crash): at most `max` within `window_secs`, so a page or runtime that fails
+/// again at once cannot loop for ever. Times are Unix seconds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retries {
+    max: usize,
+    window_secs: u64,
+    times: Vec<u64>,
+}
+
+impl Retries {
+    pub fn new(max: usize, window_secs: u64) -> Self {
+        Self {
+            max,
+            window_secs,
+            times: Vec::new(),
+        }
+    }
+
+    /// Records an attempt at `now` and returns true, or returns false (nothing
+    /// recorded) when `max` attempts already happened within the window.
+    pub fn allow(&mut self, now: u64) -> bool {
+        self.times
+            .retain(|&t| t <= now && now - t < self.window_secs);
+        if self.times.len() >= self.max {
+            return false;
+        }
+        self.times.push(now);
+        true
+    }
+
+    /// Attempt times as "t1,t2", carried to the restarted process in an
+    /// environment variable.
+    pub fn encode(&self) -> String {
+        self.times
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// Inverse of `encode`; invalid entries are dropped (the variable comes from
+    /// the environment).
+    pub fn decode(s: &str, max: usize, window_secs: u64) -> Self {
+        let mut r = Self::new(max, window_secs);
+        r.times = s
+            .split(',')
+            .filter_map(|t| t.trim().parse().ok())
+            .take(max)
+            .collect();
+        r
+    }
 }
 
 /// Player commands sent to the page.
@@ -355,6 +416,32 @@ mod tests {
         assert_eq!(s.title, "ab");
         assert_eq!(s.artist.chars().count(), MAX_TEXT_CHARS);
         assert_eq!(s.volume, 100);
+    }
+
+    #[test]
+    fn strips_bidi_overrides_but_keeps_joiners() {
+        let raw = r#"{"title":"a\u202Eb\u2066c\u2069","artist":"\u05E9\u200F\u200D\u200C"}"#;
+        let s = parse_bridge_msg(raw).unwrap();
+        assert_eq!(s.title, "abc");
+        assert_eq!(s.artist, "\u{05e9}\u{200f}\u{200d}\u{200c}");
+    }
+
+    #[test]
+    fn retries_stop_a_crash_loop_and_recover_after_the_window() {
+        let mut r = Retries::new(3, 600);
+        assert!(r.allow(1000) && r.allow(1001) && r.allow(1002));
+        assert!(
+            !r.allow(1003),
+            "fourth attempt within the window is refused"
+        );
+        assert!(r.allow(1600), "the oldest attempt left the window");
+        // Survives the trip through the environment; garbage is ignored.
+        let back = Retries::decode(&r.encode(), 3, 600);
+        assert_eq!(back, r);
+        assert!(!Retries::decode("1601,1602,x,1603", 3, 600).allow(1604));
+        assert!(Retries::decode("", 3, 600).allow(5));
+        // A clock set back does not count stale future times.
+        assert!(Retries::decode("9000,9001,9002", 3, 600).allow(100));
     }
 
     #[test]

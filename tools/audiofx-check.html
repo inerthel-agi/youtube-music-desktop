@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>audiofx routing check</title>
+<!--
+  Checks the Web Audio routing of assets/audiofx.js in a real browser engine:
+  the media always reaches the output, the reverb convolver is on the path only
+  while reverb is on, and neutral settings bypass the effect chain.
+  Run from the repository root:  python -m http.server 8765
+  then open http://127.0.0.1:8765/tools/audiofx-check.html (Edge or Chrome).
+-->
+<pre id="out">running…</pre>
+<video></video>
+<script type="module">
+const names = new Map();
+const id = (x) => names.get(x) ?? names.set(x, `${x.constructor.name}#${names.size}`).get(x);
+const edges = new Set();
+const P = AudioNode.prototype, connect = P.connect, disconnect = P.disconnect;
+P.connect = function (dst, ...r) {
+  if (dst instanceof AudioNode) edges.add(`${id(this)}>${id(dst)}`);
+  return connect.call(this, dst, ...r);
+};
+P.disconnect = function (dst, ...r) {
+  for (const e of [...edges]) if (e.startsWith(`${id(this)}>`) && (!(dst instanceof AudioNode) || e.endsWith(`>${id(dst)}`))) edges.delete(e);
+  return disconnect.call(this, dst, ...r);
+};
+// Nodes reachable from the media element source.
+const path = () => {
+  const start = [...names.values()].find((n) => n.startsWith('MediaElementAudioSourceNode'));
+  const seen = new Set([start]), queue = [start];
+  while (queue.length) {
+    const a = queue.shift();
+    for (const e of edges) if (e.startsWith(`${a}>`) && !seen.has(e.split('>')[1])) { seen.add(e.split('>')[1]); queue.push(e.split('>')[1]); }
+  }
+  return [...seen];
+};
+
+const win = {}; win.top = win; // the script only runs in the top music.youtube.com frame
+new Function('window', 'location', await (await fetch('../assets/audiofx.js')).text())(win, { hostname: 'music.youtube.com' });
+const flat = { eq: Array(10).fill(0), reverb: 0, bass_db: 0, preamp_db: 0, balance: 0, mono: false, spatial: false, limiter: false, normalize: false };
+const eq = [3, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+// [settings, convolver expected on the path, effect chain expected on the path]
+const steps = [
+  [{ ...flat, eq }, false, true],
+  [{ ...flat, eq, reverb: 0.3 }, true, true],
+  [{ ...flat, eq }, false, true],
+  [flat, false, false],
+  [{ ...flat, limiter: true }, false, true],
+  [{ ...flat, reverb: 0.2 }, true, true],
+];
+const lines = [];
+let ok = !win.__ytmFx.status().graph; // no graph before any effect
+for (const [cfg, conv, chain] of steps) {
+  win.__ytmFx.apply(cfg);
+  const p = path();
+  const pass = p.some((n) => n.startsWith('AudioDestinationNode'))
+    && p.some((n) => n.startsWith('ConvolverNode')) === conv
+    && (p.length > 2) === chain;
+  ok &&= pass;
+  lines.push(`${pass ? 'PASS' : 'FAIL'} ${JSON.stringify(cfg)} -> ${p.length} nodes`);
+}
+document.getElementById('out').textContent = `${ok ? 'ALL PASS' : 'FAILED'}\n${lines.join('\n')}`;
+</script>

@@ -58,9 +58,19 @@ pub fn style_frame<R: Runtime>(window: &Window<R>) {
     }
 }
 
+/// Page reloads after a renderer failure allowed per window (seconds).
+const RENDER_RELOADS: (usize, u64) = (3, 300);
+
+thread_local! {
+    /// Renderer recoveries; COM raises ProcessFailed on the UI thread.
+    static RELOADS: RefCell<(ytm_core::Retries, bool)> =
+        RefCell::new((ytm_core::Retries::new(RENDER_RELOADS.0, RENDER_RELOADS.1), false));
+}
+
 /// Reloads the page when its renderer dies or hangs; restarts the app when the
-/// WebView2 browser process itself exits (the webview is unusable then).
-pub fn watch_process_failures<R: Runtime>(window: &Webview<R>) {
+/// WebView2 browser process itself exits (the webview is unusable then). Both
+/// are rate limited so a page or runtime that fails again at once cannot loop.
+pub fn watch_process_failures(window: &Webview) {
     let app = window.app_handle().clone();
     let res = window.with_webview(move |pw| {
         let handler = ProcessFailedEventHandler::create(Box::new(move |sender, args| {
@@ -88,8 +98,8 @@ pub fn watch_process_failures<R: Runtime>(window: &Webview<R>) {
     }
 }
 
-fn on_process_failed<R: Runtime>(
-    app: &AppHandle<R>,
+fn on_process_failed(
+    app: &AppHandle,
     sender: Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2>,
     kind: COREWEBVIEW2_PROCESS_FAILED_KIND,
 ) {
@@ -97,10 +107,42 @@ fn on_process_failed<R: Runtime>(
         log::error!("WebView2 browser process exited; restarting the app");
         let app = app.clone();
         // Not from inside the COM callback.
-        let _ = app.clone().run_on_main_thread(move || app.restart());
+        let _ = app
+            .clone()
+            .run_on_main_thread(move || crate::restart(&app, true));
     } else if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
         || kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE
     {
+        // Allowed, and whether the user was already told reloads stopped.
+        let (allowed, told) = RELOADS.with(|r| {
+            let mut r = r.borrow_mut();
+            let allowed = r.0.allow(crate::unix_secs());
+            let told = std::mem::replace(&mut r.1, !allowed);
+            (allowed, told)
+        });
+        if !allowed {
+            log::error!(
+                "WebView2 renderer failed (kind {}) again; no reload: {} already in {} s",
+                kind.0,
+                RENDER_RELOADS.0,
+                RENDER_RELOADS.1
+            );
+            if !told {
+                let (title, body) = if crate::french_ui(app) {
+                    (
+                        "YouTube Music ne répond pas",
+                        "La page a planté plusieurs fois. Quittez puis relancez l'application.",
+                    )
+                } else {
+                    (
+                        "YouTube Music is not responding",
+                        "The page crashed several times. Quit and start the app again.",
+                    )
+                };
+                let _ = notify(title, body);
+            }
+            return;
+        }
         log::warn!("WebView2 renderer failed (kind {}); reloading", kind.0);
         if let Some(wv) = sender {
             // SAFETY: `sender` is the live ICoreWebView2 that raised the event.
@@ -645,18 +687,35 @@ static SHOW_MSG: OnceLock<u32> = OnceLock::new();
 /// Single instance: a named mutex in this Windows session. When it already
 /// exists, asks the running app to show its window (unless this launch is the
 /// silent autostart) and returns true: the caller exits.
-pub fn another_instance_running(autostart: bool) -> bool {
+///
+/// `restarted`: this process was spawned by the app restarting itself, which
+/// exits right after the spawn; wait (up to 5 s) for it to release the mutex
+/// rather than mistake it for another instance and quit.
+pub fn another_instance_running(autostart: bool, restarted: bool) -> bool {
     use windows::Win32::{
-        Foundation::{ERROR_ALREADY_EXISTS, GetLastError, LPARAM, WPARAM},
+        Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, LPARAM, WPARAM},
         System::Threading::CreateMutexW,
         UI::WindowsAndMessaging::{HWND_BROADCAST, PostMessageW},
     };
-    // SAFETY: plain named mutex; the handle stays open for the process lifetime
-    // on purpose (Windows releases it at exit).
-    let created = unsafe { CreateMutexW(None, false, w!("Local\\dev.ytm-desktop.baseline")) };
-    // SAFETY: reads this thread's last error, set by CreateMutexW just above.
-    if created.is_err() || unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
-        return false;
+    let mut tries = if restarted { 50 } else { 1 };
+    loop {
+        // SAFETY: plain named mutex; the handle stays open for the process lifetime
+        // on purpose (Windows releases it at exit).
+        let created = unsafe { CreateMutexW(None, false, w!("Local\\dev.ytm-desktop.baseline")) };
+        // SAFETY: reads this thread's last error, set by CreateMutexW just above.
+        let exists = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        let Ok(handle) = created else { return false };
+        if !exists {
+            return false;
+        }
+        tries -= 1;
+        if tries == 0 {
+            break;
+        }
+        // Our handle would keep the old instance's mutex alive: close it first.
+        // SAFETY: handle returned by CreateMutexW above, closed once.
+        let _ = unsafe { CloseHandle(handle) };
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
     if !autostart {
         // SAFETY: registered message id and a broadcast post with no pointers.
