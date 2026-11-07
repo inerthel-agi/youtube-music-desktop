@@ -72,7 +72,18 @@ pub struct PlayerState {
 }
 
 /// Page parts `assets/bridge.js` checks for.
-pub const PAGE_PARTS: &[&str] = &["progress-bar", "time-info", "player-time", "like", "next"];
+pub const PAGE_PARTS: &[&str] = &[
+    "progress-bar",
+    "time-info",
+    "player-time",
+    "like",
+    "next",
+    "previous",
+    "dislike",
+    "shuffle",
+    "repeat",
+    "nav-bar",
+];
 
 /// Like state of the current track. Unknown page values read as `Indifferent`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,6 +375,34 @@ mod tests {
     fn missing_parts_keep_known_names_only() {
         let s = parse_bridge_msg(r#"{"missing":["like","<script>","like","next"]}"#).unwrap();
         assert_eq!(s.missing, ["like", "next"]);
+    }
+
+    /// Every page element a command clicks is also checked by bridge.js, so a
+    /// YouTube Music markup change shows up in the log ("... not found") instead
+    /// of the command silently doing nothing.
+    #[test]
+    fn command_targets_are_reported_when_missing() {
+        let bridge = include_str!("../../../assets/bridge.js");
+        for (cmd, part) in [
+            (Command::Next, "next"),
+            (Command::Previous, "previous"),
+            (Command::Like, "like"),
+            (Command::Dislike, "dislike"),
+            (Command::Shuffle, "shuffle"),
+            (Command::Repeat, "repeat"),
+        ] {
+            let js = cmd.to_js();
+            let selector = js
+                .split("querySelector('")
+                .nth(1)
+                .and_then(|s| s.split('\'').next())
+                .unwrap();
+            let check = format!("['{part}', document.querySelector('{selector}')]");
+            assert!(bridge.contains(&check), "{cmd:?}: bridge.js lacks {check}");
+            assert!(PAGE_PARTS.contains(&part), "{part}");
+        }
+        let s = parse_bridge_msg(r#"{"missing":["previous","shuffle","nav-bar"]}"#).unwrap();
+        assert_eq!(s.missing, ["previous", "shuffle", "nav-bar"]);
     }
 
     #[test]

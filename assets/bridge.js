@@ -96,6 +96,12 @@
     ['player-time', player && player.getCurrentTime],
     ['like', document.querySelector('ytmusic-player-bar #button-shape-like button')],
     ['next', document.querySelector('ytmusic-player-bar .next-button')],
+    // Targets of the app's commands (ytm_core::Command::to_js) and of titlebar.js.
+    ['previous', document.querySelector('ytmusic-player-bar .previous-button')],
+    ['dislike', document.querySelector('ytmusic-player-bar #button-shape-dislike button')],
+    ['shuffle', document.querySelector('ytmusic-player-bar .shuffle')],
+    ['repeat', document.querySelector('ytmusic-player-bar .repeat')],
+    ['nav-bar', document.querySelector('ytmusic-nav-bar .left-content')],
   ].filter(([, found]) => !found).map(([name]) => name);
 
   const send = () => {

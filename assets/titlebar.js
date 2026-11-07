@@ -140,6 +140,9 @@
     if (markNavBar()) return;
     const obs = new MutationObserver(() => markNavBar() && obs.disconnect());
     obs.observe(document.body, { childList: true, subtree: true });
+    // The bar renders within seconds. Still missing after a minute, it is gone from
+    // the page (bridge.js reports "nav-bar" to the log): stop watching every change.
+    setTimeout(() => obs.disconnect(), 60000);
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();

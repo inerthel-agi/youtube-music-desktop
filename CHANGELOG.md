@@ -15,6 +15,11 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
   The new process now waits for the old one to exit.
 - A Discord client that stopped answering could block Rich Presence for good. The app now gives
   up after 5 seconds and reconnects later.
+- Sleep timer "end of track": it compared track titles, so it did not pause when the next track
+  had the same title, and paused at once when set during an ad. It now compares the video id
+  (the title when there is none) and ignores ads.
+- Changing or turning off a timed sleep timer left its thread waiting until the old deadline.
+  The thread now ends at once.
 
 ### Changed
 
@@ -25,6 +30,9 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
   notifications, Discord and the OBS widget.
 - Sound effects use less CPU: reverb runs only while it is on, and with every effect back to
   neutral the sound skips the effect chain.
+- The log also warns when the previous, dislike, shuffle or repeat button, or the top bar, is
+  missing from the YouTube Music page. If the top bar never appears, the app stops watching for
+  it after a minute.
 
 ## [0.1.3] - 2026-11-07
 

@@ -34,6 +34,10 @@ const path = () => {
   return [...seen];
 };
 
+let contexts = 0;
+const Ctx = window.AudioContext;
+window.AudioContext = class extends Ctx { constructor(...a) { super(...a); contexts++; } };
+
 const win = {}; win.top = win; // the script only runs in the top music.youtube.com frame
 new Function('window', 'location', await (await fetch('../assets/audiofx.js')).text())(win, { hostname: 'music.youtube.com' });
 const flat = { eq: Array(10).fill(0), reverb: 0, bass_db: 0, preamp_db: 0, balance: 0, mono: false, spatial: false, limiter: false, normalize: false };
@@ -46,7 +50,13 @@ const steps = [
   [flat, false, false],
   [{ ...flat, limiter: true }, false, true],
   [{ ...flat, reverb: 0.2 }, true, true],
+  [flat, false, false],
+  [{ ...flat, eq }, false, true], // re-enabled after neutral
+  [{ ...flat, eq, reverb: 0.3 }, true, true],
+  [{ ...flat, eq }, false, true],
 ];
+// The source feeds exactly one node: the effect chain or the output, never both.
+const sourceOutputs = () => [...edges].filter((e) => e.startsWith('MediaElementAudioSourceNode')).length;
 const lines = [];
 let ok = !win.__ytmFx.status().graph; // no graph before any effect
 for (const [cfg, conv, chain] of steps) {
@@ -54,9 +64,12 @@ for (const [cfg, conv, chain] of steps) {
   const p = path();
   const pass = p.some((n) => n.startsWith('AudioDestinationNode'))
     && p.some((n) => n.startsWith('ConvolverNode')) === conv
-    && (p.length > 2) === chain;
+    && (p.length > 2) === chain
+    && sourceOutputs() === 1;
   ok &&= pass;
   lines.push(`${pass ? 'PASS' : 'FAIL'} ${JSON.stringify(cfg)} -> ${p.length} nodes`);
 }
+ok &&= contexts === 1; // one AudioContext for the page's lifetime
+lines.push(`${contexts === 1 ? 'PASS' : 'FAIL'} AudioContexts created: ${contexts}`);
 document.getElementById('out').textContent = `${ok ? 'ALL PASS' : 'FAILED'}\n${lines.join('\n')}`;
 </script>
