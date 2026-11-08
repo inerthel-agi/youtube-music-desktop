@@ -35,7 +35,7 @@ No native player bar: YouTube Music already shows its own player bar; a second
 one duplicated it (removed after review). Native surfaces are reserved for what
 the page cannot provide: title bar, tray, mini-player, settings.
 
-## Data flow (event-driven, no polling)
+## Data flow (event-driven playback)
 
 ```
 music.youtube.com  --bridge.js: <video> events + MediaSession metadata setter-->  invoke('player_event', json)
@@ -61,6 +61,42 @@ Decisions:
 - **State comes from the Media Session metadata** the page already publishes to Windows (the same
   data the Windows media flyout shows) and the `<video>` element events. No DOM scraping for
   read-only data; dedup in JS and in Rust avoids redundant IPC — (2), (3).
+- **Empty shell recovery**: independently of playback events, `bridge.js` checks the top bar
+  and player bar every 2 s while the page is visible and a track is loaded (Media Session title
+  or video metadata). A healthy bar has at least 10 light-DOM descendants and visible native
+  controls: logo/search/avatar buttons for the top bar, play/pause or time for the player bar.
+  A bar failing these checks for at least 6 s reports `nav-bar` or `player-bar` in the validated
+  `missing` list, including while paused. A healthy or hidden check clears that bar's timer.
+  The native window also supplies visibility (`document.hidden` alone is insufficient for
+  a child WebView2); hidden/minimized windows cannot consume the recovery attempt. Diagnostics
+  include viewport dimensions and descendant counts, never track data.
+  Only changes send IPC. The desktop app logs the missing parts and attempts one reload per
+  process lifetime; that guard survives page reloads and track changes. It keeps the current
+  URL, including queue parameters, when it identifies the playing track; otherwise it opens
+  the validated track URL (or reloads the current music page if no track URL is available).
+  Before navigating, the bridge snapshots the current track id, player clock and playing/paused
+  state in a one-use `sessionStorage` entry, consumed at the next document's initialization
+  and applied only to its matching watch URL. No settings file is changed.
+  Restoration waits for the matching track and video metadata, seeks through the player API,
+  then resumes only if the track was playing. A paused track blocks repeated autoplay attempts
+  until explicit Play through the page or native controls. Ads are never sought through; a
+  paused recovery also keeps an ad paused. Recovery supersedes the startup last-track position.
+  If the snapshot cannot be saved, the page is left in place. Sign-in pages are left alone.
+  Loading still interrupts audio temporarily. It is a fallback: the cause
+  found on 2026-11-08 is fixed (see "Child webview size").
+- **Child webview size**: the music page and the Options page are child webviews resized in
+  `on_window_event` (`WindowEvent::Resized`), only when the window is not minimized. Tauri's
+  `auto_resize` also applies the minimized client area (about 144x19, while `document.hidden`
+  stays false); YouTube Music then switches to its mobile layout (`is-mweb-*` attributes, a
+  second `ytmusic-player-bar#top-player-bar`) and after restore leaves the top bar controls
+  `visibility: hidden` and the player bar `display: none`. Reproduced 3 times out of 3 with
+  `SW_MINIMIZE` / `SW_RESTORE` on the player page, 0 out of 3 after the change.
+- **Page errors**: `error` and `unhandledrejection` use the existing `player_event` command's
+  optional `error` argument, separate from playback state. Both JS and Rust limit them to
+  5 per 60 s; the Rust limit survives reloads. Rust accepts only fixed event categories and
+  error names (including a Trusted Types category); arbitrary names become `Other`.
+  Messages, stacks, source URLs and track metadata never enter these diagnostics. Invalid
+  player messages and player debug output do not echo their payloads into the log.
 - **Media keys / Windows media flyout need no code**: WebView2 registers the page's Media Session
   with Windows SMTC (verified: session `msedgewebview2.exe`, title/artist, next/prev enabled).
 - **Commands use DOM/player selectors, isolated in `Command::to_js`.** These are the fragile part
@@ -116,7 +152,8 @@ Private working set of the whole tree, signed in, one run per case (page content
 | Memory saver + hardware acceleration off | 230 MB | 207 MB |
 
 - Memory saver no longer uses V8 `--lite-mode` (since 0.1.2): it implies `--jitless`, which removes
-  WebAssembly and slows JS about 5x, and YouTube Music then left its top bar and player bar empty.
+  WebAssembly and slows JS about 5x. It was first suspected in the empty top/player bar failure,
+  whose cause turned out to be the minimized webview size (see "Child webview size").
   The measured gain (0 to 21 MB) was within the run-to-run noise.
 - The YouTube Music page renderer is the largest part (about 160–230 MB) and is out of the app's control.
 - Hardware acceleration is off by default since 2026-11-06: about -50 MB (GPU process 64 -> 15 MB). The playing CPU was

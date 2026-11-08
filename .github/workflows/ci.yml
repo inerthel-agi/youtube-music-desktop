@@ -29,6 +29,8 @@ jobs:
       - name: Page scripts parse
         shell: bash
         run: for f in assets/*.js; do node --check "$f"; done
+      - name: Page script behavior (tools/bridge-check.mjs)
+        run: node --test tools/bridge-check.mjs
       - name: Web Audio routing (tools/audiofx-check.html)
         shell: bash
         run: |

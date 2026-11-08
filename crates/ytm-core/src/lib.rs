@@ -83,6 +83,7 @@ pub const PAGE_PARTS: &[&str] = &[
     "shuffle",
     "repeat",
     "nav-bar",
+    "player-bar",
 ];
 
 /// Like state of the current track. Unknown page values read as `Indifferent`.
@@ -282,10 +283,10 @@ impl Command {
     pub fn to_js(self) -> String {
         match self {
             Self::PlayPause => {
-                "(v=>v&&(v.paused?v.play():v.pause()))(document.querySelector('video'))".into()
+                "(v=>{if(v){window.__ytmRestorePlayback?.(v.paused);v.paused?v.play():v.pause()}})(document.querySelector('video'))".into()
             }
-            Self::Play => "document.querySelector('video')?.play()".into(),
-            Self::Pause => "document.querySelector('video')?.pause()".into(),
+            Self::Play => "window.__ytmRestorePlayback?.(true);document.querySelector('video')?.play()".into(),
+            Self::Pause => "window.__ytmRestorePlayback?.(false);document.querySelector('video')?.pause()".into(),
             Self::Next => {
                 "document.querySelector('ytmusic-player-bar .next-button')?.click()".into()
             }
@@ -372,9 +373,32 @@ mod tests {
     }
 
     #[test]
+    fn native_playback_commands_update_the_recovery_intent_before_playback() {
+        let bridge = include_str!("../../../assets/bridge.js");
+        assert!(bridge.contains("window.__ytmRestorePlayback = (value)"));
+        for (cmd, value, action) in [
+            (Command::Play, "true", ".play()"),
+            (Command::Pause, "false", ".pause()"),
+            (Command::PlayPause, "v.paused", ".play()"),
+        ] {
+            let js = cmd.to_js();
+            let intent = format!("window.__ytmRestorePlayback?.({value})");
+            assert!(js.find(&intent).unwrap() < js.find(action).unwrap());
+        }
+        assert!(
+            !Command::SetVolume(50)
+                .to_js()
+                .contains("__ytmRestorePlayback")
+        );
+    }
+
+    #[test]
     fn missing_parts_keep_known_names_only() {
-        let s = parse_bridge_msg(r#"{"missing":["like","<script>","like","next"]}"#).unwrap();
-        assert_eq!(s.missing, ["like", "next"]);
+        let s = parse_bridge_msg(
+            r#"{"missing":["like","<script>","like","next","nav-bar","player-bar"]}"#,
+        )
+        .unwrap();
+        assert_eq!(s.missing, ["like", "next", "nav-bar", "player-bar"]);
     }
 
     /// Every page element a command clicks is also checked by bridge.js, so a

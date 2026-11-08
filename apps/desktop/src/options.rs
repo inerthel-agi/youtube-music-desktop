@@ -148,8 +148,7 @@ pub fn open(app: &AppHandle) {
     let args = shared(app).browser_args.clone();
     let builder = WebviewBuilder::new(LABEL, WebviewUrl::App("options.html".into()))
         .background_color(BG)
-        .additional_browser_args(&args)
-        .auto_resize();
+        .additional_browser_args(&args); // resized with the window, see main.rs
     match window.add_child(builder, LogicalPosition::new(0.0, 0.0), size) {
         Ok(v) => {
             let _ = v.set_focus();

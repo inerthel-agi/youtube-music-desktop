@@ -130,10 +130,76 @@ pub(crate) struct Shared {
     obs: Mutex<Option<obs::Server>>,
 }
 
-#[derive(Default)]
 struct Player {
     state: PlayerState,
     first_play_logged: bool,
+    shell_reloaded: bool,
+    page_errors: ytm_core::Retries,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            state: PlayerState::default(),
+            first_play_logged: false,
+            shell_reloaded: false,
+            page_errors: ytm_core::Retries::new(5, 60),
+        }
+    }
+}
+
+impl Player {
+    fn take_shell_recovery(&mut self, state: &PlayerState, visible: bool) -> bool {
+        let recover = visible
+            && !self.shell_reloaded
+            && (!state.title.is_empty() || !state.track_url.is_empty() || state.duration > 0)
+            && state
+                .missing
+                .iter()
+                .any(|m| matches!(m.as_str(), "nav-bar" | "player-bar"));
+        self.shell_reloaded |= recover;
+        recover
+    }
+}
+
+/// Only fixed categories reach the log, even if the remote page forges a report.
+fn page_error_label(raw: &str) -> Option<(&str, &str)> {
+    if raw.len() > 64 {
+        return None;
+    }
+    let (kind, name) = raw.split_once(':')?;
+    if !matches!(kind, "error" | "unhandledrejection") {
+        return None;
+    }
+    let name = match name {
+        "Error" | "TypeError" | "ReferenceError" | "SyntaxError" | "RangeError" | "EvalError"
+        | "URIError" | "DOMException" | "NotSupportedError" | "SecurityError" | "AbortError"
+        | "TrustedTypes" => name,
+        _ => "Other",
+    };
+    Some((kind, name))
+}
+
+fn shell_recovery_url(current: &tauri::Url, track: &str) -> Option<tauri::Url> {
+    if current.scheme() != "https" || current.host_str() != Some("music.youtube.com") {
+        return None; // Do not interrupt a sign-in redirect.
+    }
+    if track.is_empty() {
+        return Some(current.clone());
+    }
+    let target: tauri::Url = track.parse().ok()?;
+    if target.origin() != current.origin() {
+        return None;
+    }
+    // Keep the queue parameters when this URL already identifies the playing track.
+    if current.path() == "/watch"
+        && current.query_pairs().find(|(k, _)| k == "v")
+            == target.query_pairs().find(|(k, _)| k == "v")
+    {
+        Some(current.clone())
+    } else {
+        Some(target)
+    }
 }
 
 pub(crate) fn shared(app: &AppHandle) -> State<'_, Shared> {
@@ -149,29 +215,69 @@ pub(crate) fn music(app: &AppHandle) -> Option<Webview> {
 }
 
 #[tauri::command]
-fn player_event(app: AppHandle, msg: String) -> Result<(), String> {
+async fn player_event(
+    app: AppHandle,
+    msg: String,
+    error: Option<String>,
+    shell: Option<[u32; 4]>,
+) -> Result<(), String> {
+    if let Some(error) = error {
+        let (kind, name) = page_error_label(&error).ok_or("invalid page error")?;
+        let shared = shared(&app);
+        let mut p = shared.player.lock().map_err(|_| "player lock poisoned")?;
+        if p.page_errors.allow(unix_secs()) {
+            log::warn!("YouTube Music page error: {kind} ({name})");
+        }
+        return Ok(());
+    }
     let state = parse_bridge_msg(&msg).map_err(|e| {
-        log::warn!("{e}");
+        log::warn!("invalid player event message");
         e.to_string()
     })?;
-    let prev = {
+    let visible = main_window(&app)
+        .is_some_and(|w| w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(true));
+    let (prev, recover) = {
         let shared = shared(&app);
         let mut p = shared.player.lock().map_err(|_| "player lock poisoned")?;
         if state.playing && !p.first_play_logged {
             p.first_play_logged = true;
             log::info!("timing: first playback at {} ms", ms());
         }
-        if p.state == state {
+        let recover = p.take_shell_recovery(&state, visible);
+        if p.state == state && !recover {
             return Ok(());
         }
-        log::debug!("player: {state:?}");
-        std::mem::replace(&mut p.state, state.clone())
+        (std::mem::replace(&mut p.state, state.clone()), recover)
     };
     if state.missing != prev.missing && !state.missing.is_empty() {
         log::warn!(
             "YouTube Music page changed: {} not found; some features may stop working",
             state.missing.join(", ")
         );
+        if let Some(shell) = shell {
+            let [width, height, nav, player] = shell.map(|n| n.min(100_000));
+            log::warn!(
+                "shell diagnostics: viewport {width}x{height}, nav children {nav}, player children {player}, window visible {visible}"
+            );
+        }
+    }
+    if recover {
+        log::warn!("YouTube Music shell empty; attempting one reload for this app session");
+        if let Some(w) = music(&app) {
+            let target = w
+                .url()
+                .ok()
+                .and_then(|url| shell_recovery_url(&url, &state.track_url));
+            if target.is_none_or(|url| {
+                w.eval(format!(
+                    "window.__ytmRecover({});",
+                    serde_json::json!(url.as_str())
+                ))
+                .is_err()
+            }) {
+                log::warn!("YouTube Music shell recovery unavailable or failed; no retry");
+            }
+        }
     }
     features::on_state(&app, &prev, &state);
     tray::set_tooltip(&app, state.track_label());
@@ -307,6 +413,15 @@ fn set_memory_low(app: &AppHandle, low: bool) {
         && let Some(w) = music(app)
     {
         win::set_low_memory(&w, low);
+        // A child WebView2 can keep document.hidden=false while its window is minimized.
+        if w.eval(format!(
+            "window.__ytmSetVisible && window.__ytmSetVisible({});",
+            !low
+        ))
+        .is_err()
+        {
+            log::warn!("page visibility not applied");
+        }
     }
 }
 
@@ -441,6 +556,10 @@ pub(crate) fn apply_page_settings(app: &AppHandle) {
         Ok(s) => features::page_settings_js(&s),
         Err(_) => return,
     };
+    let visible = !shared(app)
+        .memory_low
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let js = format!("window.__ytmSetVisible && window.__ytmSetVisible({visible}); {js}");
     if let Some(w) = music(app)
         && let Err(e) = w.eval(js)
     {
@@ -613,7 +732,7 @@ fn build_main(
         .initialization_script(AUDIOFX_JS)
         .initialization_script(LEAN_JS)
         .additional_browser_args(browser_args)
-        .auto_resize()
+        // Resized with the window in on_window_event (WindowEvent::Resized).
         .on_navigation(|url| {
             let ok = ytm_core::navigation_allowed(url.scheme(), url.host_str().unwrap_or(""));
             if !ok {
@@ -735,11 +854,22 @@ fn main() {
                         quit(app);
                     }
                 }
-                // Minimize / restore: same memory trim as hiding to the tray.
-                #[cfg(windows)]
-                WindowEvent::Resized(_) => {
+                WindowEvent::Resized(size) => {
                     let minimized = w.is_minimized().unwrap_or(false);
+                    // Minimize / restore: same memory trim as hiding to the tray.
+                    #[cfg(windows)]
                     set_memory_low(app, minimized);
+                    // The child webviews fill the window. Not Tauri's auto_resize: it also
+                    // applies the minimized client area (about 144x19), and YouTube Music
+                    // then switches to its mobile layout and never fully comes back
+                    // (empty top bar and player bar after restore).
+                    if !minimized {
+                        for v in w.webviews() {
+                            if let Err(e) = v.set_size(*size) {
+                                log::warn!("cannot resize webview {}: {e}", v.label());
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -818,8 +948,76 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::music_permission;
+    use super::{Player, music_permission, page_error_label, shell_recovery_url};
     use tauri::webview::{PermissionKind as K, PermissionResponse as R};
+    use ytm_core::PlayerState;
+
+    #[test]
+    fn empty_shell_recovers_only_once_across_page_loads_and_tracks() {
+        let mut player = Player::default();
+        let mut state = PlayerState {
+            missing: vec!["nav-bar".into()],
+            ..PlayerState::default()
+        };
+        assert!(!player.take_shell_recovery(&state, true)); // No track loaded.
+        state.duration = 180; // Media Session metadata can also be missing.
+        state.missing = vec!["like".into()];
+        assert!(!player.take_shell_recovery(&state, true));
+        for part in ["nav-bar", "player-bar"] {
+            state.missing = vec![part.into()];
+            let mut fresh = Player::default();
+            assert!(!fresh.take_shell_recovery(&state, false)); // Hidden/minimized: defer.
+            assert!(fresh.take_shell_recovery(&state, true));
+            fresh.state = PlayerState::default(); // New document, same process.
+            state.title = "Another track".into();
+            assert!(!fresh.take_shell_recovery(&state, true));
+        }
+    }
+
+    #[test]
+    fn recovery_keeps_the_playing_track_and_existing_queue_but_leaves_sign_in_alone() {
+        let track = "https://music.youtube.com/watch?v=current";
+        let queue = "https://music.youtube.com/watch?v=current&list=queue&index=2";
+        let current = queue.parse().unwrap();
+        assert_eq!(shell_recovery_url(&current, track).unwrap().as_str(), queue);
+        for url in [
+            "https://music.youtube.com/",
+            "https://music.youtube.com/watch?v=previous",
+        ] {
+            let current = url.parse().unwrap();
+            assert_eq!(shell_recovery_url(&current, track).unwrap().as_str(), track);
+            assert_eq!(shell_recovery_url(&current, "").unwrap(), current);
+        }
+        assert!(
+            shell_recovery_url(&"https://accounts.google.com/".parse().unwrap(), track).is_none()
+        );
+        assert!(shell_recovery_url(&current, "https://example.com/").is_none());
+    }
+
+    #[test]
+    fn page_errors_are_private_and_limited_across_reloads() {
+        assert_eq!(
+            page_error_label("error:TypeError"),
+            Some(("error", "TypeError"))
+        );
+        assert_eq!(
+            page_error_label("unhandledrejection:TrustedTypes"),
+            Some(("unhandledrejection", "TrustedTypes"))
+        );
+        assert_eq!(
+            page_error_label("error:https://music.youtube.com/watch?v=private"),
+            Some(("error", "Other"))
+        );
+        assert!(page_error_label("private:TypeError").is_none());
+        assert!(page_error_label(&format!("error:{}", "x".repeat(65))).is_none());
+        let mut player = Player::default();
+        for _ in 0..5 {
+            assert!(player.page_errors.allow(100));
+        }
+        player.state = PlayerState::default();
+        assert!(!player.page_errors.allow(159));
+        assert!(player.page_errors.allow(160));
+    }
 
     #[test]
     fn music_page_gets_no_device_or_prompt_permissions_but_keeps_playback() {

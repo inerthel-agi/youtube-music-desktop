@@ -2,6 +2,27 @@
 
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.6] - 2026-11-08
+
+### Fixed
+
+- The top bar and the player bar could stay empty after the window was minimized and restored.
+  Minimizing shrank the page to about 144 x 19 px, so YouTube Music switched to its mobile
+  layout and did not fully switch back. The page now keeps its size while the window is
+  minimized (Tauri's `auto_resize` is replaced by a resize that skips the minimized state).
+- Detect an empty YouTube Music top bar or player bar even while playback is paused.
+  After six seconds of persistent emptiness with a track loaded, log it and attempt
+  one page reload per app session, keeping the playing track URL and existing queue
+  parameters when that URL already identifies the track. The reload restores the playback
+  position and the playing or paused state; a paused track stays paused.
+
+### Changed
+
+- Log uncaught page errors and unhandled promise rejections as fixed categories only,
+  without messages, stacks, URLs or track metadata. Limit these reports to five per
+  minute across page loads. Player debug logs no longer include track metadata.
+- Windows CI also runs the page script tests (`node --test tools/bridge-check.mjs`).
+
 ## [0.1.5] - 2026-11-07
 
 ### Fixed
@@ -110,6 +131,8 @@ First release.
 - Settings export and import.
 - Per-user NSIS installer and portable zip.
 
+[Unreleased]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/inerthel-agi/youtube-music-desktop/compare/v0.1.2...v0.1.3
